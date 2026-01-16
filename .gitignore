@@ -1,0 +1,20 @@
+# data / outputs
+data/*
+runs/*
+checkpoints/*
+*.pt
+*.pth
+*.ckpt
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# notebooks
+.ipynb_checkpoints/
+
+# mac
+.DS_Store

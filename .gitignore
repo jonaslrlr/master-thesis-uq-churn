@@ -1,20 +1,13 @@
-# data / outputs
-data/*
-runs/*
-checkpoints/*
-*.pt
-*.pth
-*.ckpt
-
-# python
-__pycache__/
-*.pyc
+# --- python / mac junk ---
 .venv/
-venv/
-.env
-
-# notebooks
+__pycache__/
+*.py[cod]
 .ipynb_checkpoints/
-
-# mac
+*.egg-info/
 .DS_Store
+
+# --- experiment outputs ---
+reports/
+
+# --- data (recommended: don't version datasets) ---
+data/

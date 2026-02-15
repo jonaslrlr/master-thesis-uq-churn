@@ -1,13 +1,13 @@
-# --- python / mac junk ---
-.venv/
-__pycache__/
-*.py[cod]
-.ipynb_checkpoints/
-*.egg-info/
+# macOS
 .DS_Store
 
-# --- experiment outputs ---
+# python
+__pycache__/
+*.pyc
+
+# experiment outputs
+logs/
 reports/
 
-# --- data (recommended: don't version datasets) ---
-data/
+# optional: arrays / artifacts
+*.npz

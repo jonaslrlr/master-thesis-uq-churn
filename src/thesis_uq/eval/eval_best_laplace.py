@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import argparse
 import json
 import numpy as np
 
@@ -8,24 +9,44 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import MinMaxScaler
 
 from thesis_uq.seed import set_seed
-from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 from thesis_uq.data.splits import train_valid_test_split
-from thesis_uq.models.tabnet_baseline import train_tabnet_baseline
 from thesis_uq.metrics.ranking import standard_report
+from thesis_uq.models.tabnet_baseline import train_tabnet_baseline
 
 from thesis_uq.models.tabnet_laplace import (
-    LaplaceConfig, extract_tabnet_representation, laplace_from_tabnet_features
+    LaplaceConfig,
+    extract_tabnet_representation,
+    laplace_from_tabnet_features,
 )
 
-REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "telco"
+from thesis_uq.data.registry import load_for_tabnet
+from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 
-SPLIT_SEED = 42
-TRAIN_SEEDS = list(range(5, 15))  # 5..14
-DEVICE_NAME = "cpu"
 
-BEST_LAPLACE_FILE = REPO_ROOT / "reports" / "best" / "telco_laplace_split42_trainseeds1-4.json"
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "telco_baseline_split42_trainseeds1-4.json"
+def parse_seeds(s: str) -> list[int]:
+    s = s.strip()
+    if "-" in s:
+        a, b = s.split("-", 1)
+        a, b = int(a), int(b)
+        step = 1 if b >= a else -1
+        return list(range(a, b + step, step))
+    return [int(x.strip()) for x in s.split(",") if x.strip()]
+
+
+def guess_repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for p in [here] + list(here.parents):
+        if (p / "reports").exists():
+            return p
+    return Path.cwd()
+
+
+def load_tabnet_data(dataset: str, repo_root: Path):
+    if dataset == "telco":
+        csv_path = repo_root / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
+        df = load_telco_csv(csv_path)
+        return encode_tabular_for_tabnet(df)
+    return load_for_tabnet(dataset, repo_root)
 
 
 def fit_lr_reranker(p_valid: np.ndarray, u_valid: np.ndarray, y_valid: np.ndarray):
@@ -44,18 +65,45 @@ def apply_lr_reranker(scaler, lr, p: np.ndarray, u: np.ndarray) -> np.ndarray:
 
 
 def main():
-    print("Device:", DEVICE_NAME)
-    print("Split seed:", SPLIT_SEED)
-    print("Train seeds:", TRAIN_SEEDS)
-    print("Best Laplace:", BEST_LAPLACE_FILE)
-    print("Baseline best:", BASELINE_BEST_FILE)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset", default="telco")
+    ap.add_argument("--split_seed", type=int, default=42)
+    ap.add_argument("--seeds", default="5-15")
+    ap.add_argument("--device", default="cpu")
 
-    lap = json.loads(BEST_LAPLACE_FILE.read_text())
+    ap.add_argument("--best_laplace_file", default=None)
+    ap.add_argument("--baseline_best_file", default=None)
+    ap.add_argument("--repo_root", default=None)
+    args = ap.parse_args()
+
+    repo_root = Path(args.repo_root).expanduser().resolve() if args.repo_root else guess_repo_root()
+    dataset = args.dataset
+    split_seed = args.split_seed
+    train_seeds = parse_seeds(args.seeds)
+    device = args.device
+
+    best_laplace_file = Path(args.best_laplace_file).expanduser().resolve() if args.best_laplace_file else (
+        repo_root / "reports" / "best" / f"{dataset}_laplace_split{split_seed}_trainseeds1-4.json"
+    )
+    baseline_best_file = Path(args.baseline_best_file).expanduser().resolve() if args.baseline_best_file else (
+        repo_root / "reports" / "best" / f"{dataset}_baseline_split{split_seed}_trainseeds1-4.json"
+    )
+
+    print("Repo root:", repo_root)
+    print("Dataset:", dataset)
+    print("Device:", device)
+    print("Split seed:", split_seed)
+    print("Train seeds:", train_seeds)
+    print("Best Laplace:", best_laplace_file)
+    print("Baseline best:", baseline_best_file)
+
+    lap = json.loads(best_laplace_file.read_text())
     lap_cfg = LaplaceConfig(**lap["config"])
-    print("\nUsing Laplace config:", lap.get("best_tag", "unknown"))
+    lap_tag = lap.get("best_tag", "unknown")
+    print("\nUsing Laplace config:", lap_tag)
     print(lap_cfg)
 
-    base = json.loads(BASELINE_BEST_FILE.read_text())
+    base = json.loads(baseline_best_file.read_text())
     BASE = base["config"]
 
     tabnet_kwargs = dict(
@@ -68,24 +116,34 @@ def main():
         batch_size=BASE["batch_size"], virtual_batch_size=BASE["virtual_batch_size"],
     )
 
-    csv_path = REPO_ROOT / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
-    df = load_telco_csv(csv_path)
-    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = encode_tabular_for_tabnet(df)
+    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_tabnet_data(dataset, repo_root)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=split_seed)
+    print("Split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    out_dir = repo_root / "reports" / "eval"
+    run_dir = out_dir / "runs"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
 
-    for train_seed in TRAIN_SEEDS:
-        set_seed(train_seed)
-        print(f"\n=== TRAIN SEED {train_seed} ===")
+    for s in train_seeds:
+        run_json = run_dir / f"{dataset}_laplace_eval_split{split_seed}_trainseed{s}.json"
+        if run_json.exists():
+            row = json.loads(run_json.read_text())
+            rows.append(row)
+            print(f"⏭️  SKIP seed={s} (cached)")
+            continue
+
+        set_seed(s)
+        print(f"\n=== TRAIN SEED {s} ===")
 
         clf = train_tabnet_baseline(
             X_train, y_train, X_valid, y_valid,
             cat_idxs, cat_dims_list,
-            device_name=DEVICE_NAME,
+            device_name=device,
             dropout=0.0,
-            seed=train_seed,
+            seed=s,
             **tabnet_kwargs,
             **train_kwargs,
         )
@@ -94,23 +152,29 @@ def main():
         feat_valid = extract_tabnet_representation(clf, X_valid)
         feat_test  = extract_tabnet_representation(clf, X_test)
 
-        p_map_valid, p_map_test, p_lap_valid_mean, p_lap_valid_std, p_lap_test_mean, p_lap_test_std = (
-            laplace_from_tabnet_features(feat_train, y_train, feat_valid, feat_test, lap_cfg, seed=train_seed)
+        res = laplace_from_tabnet_features(
+            feat_train, y_train, feat_valid, feat_test, lap_cfg, seed=s
         )
 
-        # MAP head (det)
-        rep_map = standard_report(y_test, p_map_test)
+        # Handle both possible return signatures:
+        # A) (p_map_valid, p_map_test, p_lap_valid_mean, p_lap_valid_std, p_lap_test_mean, p_lap_test_std)
+        # B) (p_map_valid, p_map_test, p_lap_valid_mean, u_valid,         p_lap_test_mean,  u_test)
+        try:
+            p_map_valid, p_map_test, p_lap_valid_mean, p_lap_valid_std, p_lap_test_mean, p_lap_test_std = res
+        except ValueError:
+            p_map_valid, p_map_test, p_lap_valid_mean, p_lap_valid_std, p_lap_test_mean, p_lap_test_std = (
+                res[0], res[1], res[2], res[3], res[4], res[5]
+            )
 
-        # Laplace mean
+        rep_map = standard_report(y_test, p_map_test)
         rep_lap = standard_report(y_test, p_lap_test_mean)
 
-        # LR rerank on VALID (Laplace mean + std)
         scaler, lr = fit_lr_reranker(p_lap_valid_mean, p_lap_valid_std, y_valid)
         p_lr = apply_lr_reranker(scaler, lr, p_lap_test_mean, p_lap_test_std)
         rep_lr = standard_report(y_test, p_lr)
 
-        rows.append({
-            "train_seed": train_seed,
+        row = {
+            "train_seed": s,
 
             "map_auc_roc": rep_map["auc_roc"],
             "map_auc_pr": rep_map["auc_pr"],
@@ -124,39 +188,39 @@ def main():
             "lr_auc_roc": rep_lr["auc_roc"],
             "lr_auc_pr": rep_lr["auc_pr"],
             "lr_lift10": rep_lr["lift10"],
-        })
+        }
+        rows.append(row)
+        run_json.write_text(json.dumps(row, indent=2))
 
         print("MAP:", rep_map)
-        print("LAP:", rep_lap, "| u_mean:", float(np.mean(p_lap_test_std)))
+        print("LAP:", rep_lap, "| u_mean:", row["lap_u_mean"])
         print("LR :", rep_lr)
 
     import pandas as pd
+
     df_rep = pd.DataFrame(rows).set_index("train_seed").sort_index()
     print("\n=== PER-SEED TEST RESULTS ===")
     print(df_rep)
 
-    out_dir = REPO_ROOT / "reports" / "eval"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    csv_file = out_dir / f"{DATASET}_laplace_eval_split{SPLIT_SEED}_trainseeds{TRAIN_SEEDS[0]}-{TRAIN_SEEDS[-1]}.csv"
-    df_rep.to_csv(csv_file)
-
     mean = df_rep.mean(numeric_only=True)
     std = df_rep.std(numeric_only=True)
 
+    csv_file = out_dir / f"{dataset}_laplace_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.csv"
+    df_rep.to_csv(csv_file)
+
     summary = {
-        "dataset": DATASET,
-        "split_seed": SPLIT_SEED,
-        "train_seeds": TRAIN_SEEDS,
-        "best_laplace_file": str(BEST_LAPLACE_FILE),
-        "best_tag": lap.get("best_tag", "unknown"),
+        "dataset": dataset,
+        "split_seed": split_seed,
+        "train_seeds": train_seeds,
+        "best_laplace_file": str(best_laplace_file),
+        "best_tag": lap_tag,
         "laplace_config": lap["config"],
-        "baseline_backbone_file": str(BASELINE_BEST_FILE),
+        "baseline_backbone_file": str(baseline_best_file),
         "mean": mean.to_dict(),
         "std": std.to_dict(),
     }
 
-    json_file = out_dir / f"{DATASET}_laplace_eval_split{SPLIT_SEED}_trainseeds{TRAIN_SEEDS[0]}-{TRAIN_SEEDS[-1]}.json"
+    json_file = out_dir / f"{dataset}_laplace_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.json"
     json_file.write_text(json.dumps(summary, indent=2))
 
     print("\n=== MEAN ± STD (TEST, fixed split) ===")

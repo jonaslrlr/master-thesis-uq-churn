@@ -100,7 +100,7 @@ def main():
                 print(f"⏭️  SKIP {run_tag}")
                 continue
 
-            # training randomness only (global)
+            # training randomness only
             set_seed(train_seed)
             print(f"-> RUN {run_tag}")
 
@@ -120,7 +120,6 @@ def main():
                 batch_size=cfg["batch_size"],
                 virtual_batch_size=cfg["virtual_batch_size"],
                 dropout=cfg["dropout"],
-                seed=train_seed,  # ✅ CRITICAL: passed into TabNetClassifier(seed=...)
             )
 
             # VALID

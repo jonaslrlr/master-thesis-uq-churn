@@ -11,6 +11,7 @@ from thesis_uq.models.tabnet_mc_dropout import train_tabnet_mc_dropout, mc_predi
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
+from thesis_uq.eval._cli import parse_eval_args
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
 DATASET = "cell2cell"

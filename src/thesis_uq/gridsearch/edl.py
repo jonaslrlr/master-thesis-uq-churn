@@ -9,8 +9,8 @@ from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 from thesis_uq.data.splits import train_valid_test_split
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
-from thesis_uq.data.registry import load_for_tabnet
 from thesis_uq.models.tabnet_edl import EDLConfig, train_tabnet_edl, edl_predict_proba_unc
+from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
 DATASET = "cell2cell"
@@ -28,7 +28,8 @@ KL_GRID = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0,3.5,4.0]
 ANNEAL_EPOCHS = 50
 
 # Baseline best backbone (fixed-test protocol)
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "telco_baseline_split42_trainseeds1-4.json"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cell2cell_baseline_split42_trainseeds1-4.json"
+
 
 
 def main():
@@ -55,7 +56,7 @@ def main():
     X, y, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
 
     # Fixed split ONCE
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
     print("\nFixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     agg_rows = []

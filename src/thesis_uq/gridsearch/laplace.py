@@ -17,6 +17,8 @@ from thesis_uq.models.tabnet_laplace import (
 )
 
 from thesis_uq.data.registry import load_for_tabnet
+from thesis_uq.eval._cli import parse_eval_args
+
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
 DATASET = "cell2cell"

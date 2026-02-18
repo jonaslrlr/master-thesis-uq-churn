@@ -36,12 +36,55 @@ class EDLConfig:
     # EDL
     kl_coef: float = 1.0
     anneal_epochs: int = 50
+    edl_loss: str = "mse"           # NEW: "mse" or "ce" (cross-entropy Bayes risk)
 
+    # evidential head architecture
+    head_hidden_dim: int = 0        # NEW: 0 = single linear (original), >0 = 2-layer MLP
+
+    # dropout (EDL backbone is typically deterministic, but allow override)
+    dropout: float = 0.0
+    attn_dropout: float = 0.0
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Head builder
+# ─────────────────────────────────────────────────────────────────────
+
+def _build_evidence_head(n_d: int, K: int, head_hidden_dim: int) -> torch.nn.Module:
+    """
+    Build the evidential head mapping TabNet representation h -> K evidence logits.
+
+    Parameters
+    ----------
+    n_d : int
+        Input dimension (TabNet decision dim).
+    K : int
+        Number of classes.
+    head_hidden_dim : int
+        If 0: single Linear(n_d, K) — original behaviour.
+        If >0: Linear(n_d, head_hidden_dim) -> ReLU -> Linear(head_hidden_dim, K).
+        Gives the network a nonlinear knob to modulate evidence magnitude
+        independently from class direction.
+    """
+    if head_hidden_dim <= 0:
+        return torch.nn.Linear(n_d, K, bias=True)
+    else:
+        return torch.nn.Sequential(
+            torch.nn.Linear(n_d, head_hidden_dim, bias=True),
+            torch.nn.ReLU(),
+            torch.nn.Linear(head_hidden_dim, K, bias=True),
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Model
+# ─────────────────────────────────────────────────────────────────────
 
 class TabNetEDL(torch.nn.Module):
     """
     TabNet backbone (embedder + encoder) -> decision representation h (n_d)
     -> evidential head (K logits) -> evidence=softplus -> Dirichlet alpha=evidence+1
+
     Output:
       probs = alpha / sum(alpha)
       vacuity u = K / sum(alpha)
@@ -87,12 +130,14 @@ class TabNetEDL(torch.nn.Module):
             epsilon=1e-15,
             virtual_batch_size=cfg.virtual_batch_size,
             momentum=cfg.momentum,
-            dropout=0.0,  # EDL backbone deterministic
+            dropout=cfg.dropout,
+            attn_dropout=cfg.attn_dropout,
             mask_type=cfg.mask_type,
             group_attention_matrix=self.embedding_group_matrix,
         )
 
-        self.head = torch.nn.Linear(cfg.n_d, K, bias=True)
+        # NEW: configurable evidential head
+        self.head = _build_evidence_head(cfg.n_d, K, cfg.head_hidden_dim)
 
     def _sync_group_matrices(self):
         # make sure encoder uses buffer tensor (correct device)
@@ -107,7 +152,7 @@ class TabNetEDL(torch.nn.Module):
         steps_output, M_loss = self.encoder(x_emb)
         h = torch.sum(torch.stack(steps_output, dim=0), dim=0)  # (B, n_d)
 
-        logits = self.head(h)  # (B,K)
+        logits = self.head(h)  # (B, K)
         evidence = F.softplus(logits)
         alpha = evidence + 1.0
         S = alpha.sum(dim=1, keepdim=True)
@@ -137,14 +182,18 @@ def edl_predict_proba_unc(model: TabNetEDL, X: np.ndarray, device: str, batch_si
     return np.concatenate(ps), np.concatenate(us)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Loss functions
+# ─────────────────────────────────────────────────────────────────────
+
 def _dirichlet_kl(alpha: torch.Tensor, K: int) -> torch.Tensor:
     """
     KL( Dir(alpha) || Dir(1) ) with uniform prior.
     """
     beta = torch.ones((1, K), device=alpha.device)
 
-    S_alpha = alpha.sum(dim=1, keepdim=True)          # (B,1)
-    S_beta = beta.sum(dim=1, keepdim=True)            # (1,1) = K
+    S_alpha = alpha.sum(dim=1, keepdim=True)
+    S_beta = beta.sum(dim=1, keepdim=True)
 
     lnB_alpha = torch.lgamma(alpha).sum(dim=1, keepdim=True) - torch.lgamma(S_alpha)
     lnB_beta  = torch.lgamma(beta).sum(dim=1, keepdim=True)  - torch.lgamma(S_beta)
@@ -152,15 +201,29 @@ def _dirichlet_kl(alpha: torch.Tensor, K: int) -> torch.Tensor:
     digamma_alpha = torch.digamma(alpha)
     digamma_S = torch.digamma(S_alpha)
 
-    # NOTE the sign: lnB_beta - lnB_alpha
     kl = (lnB_beta - lnB_alpha) + ((alpha - beta) * (digamma_alpha - digamma_S)).sum(dim=1, keepdim=True)
     return kl.squeeze(1)
 
 
+def _kl_term(alpha: torch.Tensor, y_onehot: torch.Tensor, epoch: int, cfg: EDLConfig) -> torch.Tensor:
+    """
+    Annealed KL regulariser shared by both MSE and CE losses.
+    Uses the "removal of non-misleading evidence" trick from Sensoy et al.:
+    only penalise evidence for *incorrect* classes.
+    """
+    K = alpha.shape[1]
+    alpha_tilde = y_onehot + (1.0 - y_onehot) * alpha
+    anneal = min(1.0, epoch / float(cfg.anneal_epochs))
+    kl = _dirichlet_kl(alpha_tilde, K).mean()
+    return cfg.kl_coef * anneal * kl
+
 
 def edl_mse_bayes_risk(alpha: torch.Tensor, y_true: torch.Tensor, epoch: int, cfg: EDLConfig) -> torch.Tensor:
     """
-    Sensoy et al. classification EDL with MSE Bayes risk (Eq.5) + masked KL annealed.
+    Sensoy et al. Eq. 5: MSE Bayes risk.
+
+    Data-fit = E_Dir[ ||y - p||^2 ] = sum_k (y_k - m_k)^2 + var_k
+    where m = alpha/S, var = alpha*(S-alpha)/(S^2*(S+1))
     """
     K = alpha.shape[1]
     y = F.one_hot(y_true, num_classes=K).float()
@@ -171,12 +234,43 @@ def edl_mse_bayes_risk(alpha: torch.Tensor, y_true: torch.Tensor, epoch: int, cf
 
     mse = ((y - p) ** 2 + var).sum(dim=1).mean()
 
-    alpha_tilde = y + (1.0 - y) * alpha
-    anneal = min(1.0, epoch / float(cfg.anneal_epochs))
-    kl = _dirichlet_kl(alpha_tilde, K).mean()
+    return mse + _kl_term(alpha, y, epoch, cfg)
 
-    return mse + (cfg.kl_coef * anneal) * kl
 
+def edl_ce_bayes_risk(alpha: torch.Tensor, y_true: torch.Tensor, epoch: int, cfg: EDLConfig) -> torch.Tensor:
+    """
+    Sensoy et al. Eq. 4: Cross-entropy Bayes risk.
+
+    Data-fit = E_Dir[ -sum_k y_k log(p_k) ]
+             = sum_k y_k * ( digamma(S) - digamma(alpha_k) )
+
+    Advantages over MSE:
+      - Sharper gradients for misclassified examples (does not plateau
+        when predictions are already close).
+      - Better calibrated evidence in practice (Sensoy §4.2).
+    """
+    K = alpha.shape[1]
+    y = F.one_hot(y_true, num_classes=K).float()
+
+    S = alpha.sum(dim=1, keepdim=True)
+    ce = (y * (torch.digamma(S) - torch.digamma(alpha))).sum(dim=1).mean()
+
+    return ce + _kl_term(alpha, y, epoch, cfg)
+
+
+def _get_edl_loss_fn(cfg: EDLConfig):
+    """Return the appropriate EDL loss based on config."""
+    if cfg.edl_loss == "mse":
+        return edl_mse_bayes_risk
+    elif cfg.edl_loss == "ce":
+        return edl_ce_bayes_risk
+    else:
+        raise ValueError(f"Unknown edl_loss: {cfg.edl_loss!r}. Choose 'mse' or 'ce'.")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Training
+# ─────────────────────────────────────────────────────────────────────
 
 def train_tabnet_edl(
     X_train: np.ndarray, y_train: np.ndarray,
@@ -210,6 +304,9 @@ def train_tabnet_edl(
         shuffle=True,
     )
 
+    # Select loss function from config
+    loss_fn = _get_edl_loss_fn(cfg)
+
     best_score = -np.inf
     best_state = None
     patience_ctr = 0
@@ -225,7 +322,7 @@ def train_tabnet_edl(
             opt.zero_grad()
             _, alpha, _, _, M_loss = model(xb)
 
-            loss = edl_mse_bayes_risk(alpha, yb, epoch=epoch, cfg=cfg) + lambda_sparse * M_loss
+            loss = loss_fn(alpha, yb, epoch=epoch, cfg=cfg) + lambda_sparse * M_loss
             loss.backward()
             opt.step()
             losses.append(loss.item())
@@ -233,7 +330,7 @@ def train_tabnet_edl(
         # VALID evaluation
         p_val, _ = edl_predict_proba_unc(model, X_valid, device=device, batch_size=2048)
         rep = standard_report(y_valid, p_val)
-        score = rep["auc_pr"]  # your trapezoid PR-AUC
+        score = rep["auc_pr"]
 
         if epoch == 1 or epoch % 10 == 0:
             print(f"epoch {epoch:03d} | loss {np.mean(losses):.4f} | valid_prauc {score:.5f} | valid_lift {rep['lift10']:.4f}")

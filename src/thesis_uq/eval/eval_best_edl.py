@@ -1,188 +1,138 @@
 from __future__ import annotations
 
 from pathlib import Path
-import argparse
 import json
 import numpy as np
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import MinMaxScaler
-
 from thesis_uq.seed import set_seed
 from thesis_uq.data.splits import train_valid_test_split
+from thesis_uq.models.tabnet_edl import (
+    EDLConfig, train_tabnet_edl, edl_predict_proba_unc,
+)
 from thesis_uq.metrics.ranking import standard_report
-from thesis_uq.models.tabnet_edl import EDLConfig, train_tabnet_edl, edl_predict_proba_unc
-
+from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
-from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 
+REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
+DATASET = "cell2cell"
+SPLIT_SEED = 42
 
-def parse_seeds(s: str) -> list[int]:
-    s = s.strip()
-    if "-" in s:
-        a, b = s.split("-", 1)
-        a, b = int(a), int(b)
-        step = 1 if b >= a else -1
-        return list(range(a, b + step, step))
-    return [int(x.strip()) for x in s.split(",") if x.strip()]
+# Fresh eval seeds (never seen during gridsearch)
+EVAL_SEEDS = list(range(5, 15))  # seeds 5..14
 
+DEVICE_NAME = "cpu"
+LAMBDA_SPARSE = 1e-3
 
-def guess_repo_root() -> Path:
-    here = Path(__file__).resolve()
-    for p in [here] + list(here.parents):
-        if (p / "reports").exists():
-            return p
-    return Path.cwd()
-
-
-def load_tabnet_data(dataset: str, repo_root: Path):
-    if dataset == "telco":
-        csv_path = repo_root / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
-        df = load_telco_csv(csv_path)
-        return encode_tabular_for_tabnet(df)
-    return load_for_tabnet(dataset, repo_root)
-
-
-def fit_lr_reranker(p_valid: np.ndarray, u_valid: np.ndarray, y_valid: np.ndarray):
-    Xv = np.column_stack([u_valid, p_valid])
-    scaler = MinMaxScaler()
-    Xv_s = scaler.fit_transform(Xv)
-    lr = LogisticRegression(max_iter=2000)
-    lr.fit(Xv_s, y_valid)
-    return scaler, lr
-
-
-def apply_lr_reranker(scaler, lr, p: np.ndarray, u: np.ndarray) -> np.ndarray:
-    Xt = np.column_stack([u, p])
-    Xt_s = scaler.transform(Xt)
-    return lr.predict_proba(Xt_s)[:, 1]
+# Best EDL config from gridsearch
+BEST_FILE = REPO_ROOT / "reports" / "best" / f"{DATASET}_edl_split{SPLIT_SEED}_trainseeds1-4.json"
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dataset", default="telco")
-    ap.add_argument("--split_seed", type=int, default=42)
-    ap.add_argument("--seeds", default="5-15")
-    ap.add_argument("--device", default="cpu")
+    print("=== EDL EVALUATION (unbiased test) ===")
+    print("Dataset:", DATASET)
+    print("Split seed:", SPLIT_SEED)
+    print("Eval seeds:", EVAL_SEEDS)
+    print("Best file:", BEST_FILE)
 
-    ap.add_argument("--best_file", default=None)
-    ap.add_argument("--repo_root", default=None)
-    args = ap.parse_args()
+    best = json.loads(BEST_FILE.read_text())
+    CFG = best["config"]
+    print("\nBest tag:", best["best_tag"])
+    print("Config:", json.dumps(CFG, indent=2))
 
-    repo_root = Path(args.repo_root).expanduser().resolve() if args.repo_root else guess_repo_root()
-    dataset = args.dataset
-    split_seed = args.split_seed
-    train_seeds = parse_seeds(args.seeds)
-    device = args.device
+    results_dir = REPO_ROOT / "reports" / "results"
+    uq_dir = REPO_ROOT / "reports" / "uq_scores"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    uq_dir.mkdir(parents=True, exist_ok=True)
 
-    best_file = Path(args.best_file).expanduser().resolve() if args.best_file else (
-        repo_root / "reports" / "best" / f"{dataset}_edl_split{split_seed}_trainseeds1-4.json"
+    # Load data + fixed split
+    X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    print("\nSplit shapes:", X_train.shape, X_valid.shape, X_test.shape)
+
+    # Build EDLConfig from best
+    cfg = EDLConfig(
+        n_d=CFG["n_d"],
+        n_a=CFG["n_a"],
+        n_steps=CFG["n_steps"],
+        gamma=CFG["gamma"],
+        mask_type=CFG["mask_type"],
+        cat_emb_dim=CFG["cat_emb_dim"],
+        lr=CFG["lr"],
+        weight_decay=CFG["weight_decay"],
+        max_epochs=CFG["max_epochs"],
+        patience=CFG["patience"],
+        batch_size=CFG["batch_size"],
+        virtual_batch_size=CFG["virtual_batch_size"],
+        momentum=CFG.get("momentum", 0.02),
+        kl_coef=CFG["kl_coef"],
+        anneal_epochs=CFG["anneal_epochs"],
+        edl_loss=CFG.get("edl_loss", "mse"),
+        head_hidden_dim=CFG.get("head_hidden_dim", 0),
     )
 
-    print("Repo root:", repo_root)
-    print("Dataset:", dataset)
-    print("Device:", device)
-    print("Fixed split seed:", split_seed)
-    print("Eval train seeds:", train_seeds)
-    print("Best EDL file:", best_file)
+    all_test = []
 
-    best = json.loads(best_file.read_text())
-    best_tag = best.get("best_tag", "unknown")
-    cfg = EDLConfig(**best["config"])
+    for seed in EVAL_SEEDS:
+        run_tag = f"edl_eval_split{SPLIT_SEED}_trainseed{seed}"
+        out_json = results_dir / f"{DATASET}_{run_tag}.json"
 
-    print("\nUsing best EDL config:", best_tag)
-    print(best["config"])
-
-    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_tabnet_data(dataset, repo_root)
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=split_seed)
-    print("\nFixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
-
-    out_dir = repo_root / "reports" / "eval"
-    run_dir = out_dir / "runs"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    rows = []
-
-    for s in train_seeds:
-        run_json = run_dir / f"{dataset}_edl_eval_split{split_seed}_trainseed{s}.json"
-        if run_json.exists():
-            row = json.loads(run_json.read_text())
-            rows.append(row)
-            print(f"⏭️  SKIP seed={s} (cached)")
+        # resume-safe
+        if out_json.exists():
+            payload = json.loads(out_json.read_text())
+            t = payload["metrics"]["test"]
+            all_test.append(t)
+            print(f"⏭️  SKIP {run_tag}  prauc={t['auc_pr']:.5f}  lift10={t['lift10']:.4f}  u_mean={t['u_mean']:.4f}")
             continue
 
-        set_seed(s)
-        print(f"\n=== TRAIN SEED {s} ===")
+        set_seed(seed)
+        print(f"\n-> RUN {run_tag}")
 
         model = train_tabnet_edl(
             X_train, y_train, X_valid, y_valid,
             cat_idxs, cat_dims_list,
             cfg=cfg,
-            device_name=device,
-            seed=s,
+            device_name=DEVICE_NAME,
+            seed=seed,
+            lambda_sparse=LAMBDA_SPARSE,
         )
 
-        # EDL base
-        p_test, u_test = edl_predict_proba_unc(model, X_test, device=device)
-        rep_edl = standard_report(y_test, p_test)
+        p_valid, u_valid = edl_predict_proba_unc(model, X_valid, device=DEVICE_NAME)
+        p_test,  u_test  = edl_predict_proba_unc(model, X_test,  device=DEVICE_NAME)
 
-        # LR rerank (fit on VALID)
-        p_valid, u_valid = edl_predict_proba_unc(model, X_valid, device=device)
-        scaler, lr = fit_lr_reranker(p_valid, u_valid, y_valid)
-        p_lr = apply_lr_reranker(scaler, lr, p_test, u_test)
-        rep_lr = standard_report(y_test, p_lr)
+        valid_rep = standard_report(y_valid, p_valid)
+        test_rep = standard_report(y_test, p_test)
 
-        row = {
-            "train_seed": s,
+        valid_rep["u_mean"] = float(np.mean(u_valid))
+        test_rep["u_mean"] = float(np.mean(u_test))
+        test_rep["u_std"] = float(np.std(u_test))
+        test_rep["u_median"] = float(np.median(u_test))
 
-            "edl_auc_roc": rep_edl["auc_roc"],
-            "edl_auc_pr": rep_edl["auc_pr"],
-            "edl_lift10": rep_edl["lift10"],
-            "edl_u_mean": float(np.mean(u_test)),
+        meta = RunMeta(dataset=DATASET, method="edl", seed=seed, tag=run_tag)
+        save_metrics_json(out_json, meta, metrics={"valid": valid_rep, "test": test_rep}, config=CFG)
 
-            "lr_auc_roc": rep_lr["auc_roc"],
-            "lr_auc_pr": rep_lr["auc_pr"],
-            "lr_lift10": rep_lr["lift10"],
-        }
-        rows.append(row)
-        run_json.write_text(json.dumps(row, indent=2))
+        # Save NPZ per seed for downstream analysis
+        npz_path = uq_dir / f"{DATASET}_edl_eval_split{SPLIT_SEED}_trainseed{seed}.npz"
+        save_uq_scores_npz(npz_path,
+                           y_valid=y_valid, p_valid=p_valid, u_valid=u_valid,
+                           y_test=y_test,   p_test=p_test,   u_test=u_test)
 
-        print("EDL:", rep_edl, "| u_mean:", row["edl_u_mean"])
-        print("LR :", rep_lr)
+        all_test.append(test_rep)
+        print(f"   TEST prauc={test_rep['auc_pr']:.5f}  lift10={test_rep['lift10']:.4f}  u_mean={test_rep['u_mean']:.4f}")
 
-    import pandas as pd
+    # Aggregate
+    print("\n" + "=" * 70)
+    print("EDL TEST RESULTS (mean ± std over eval seeds)")
+    print("=" * 70)
 
-    df_rep = pd.DataFrame(rows).set_index("train_seed").sort_index()
-    print("\n=== PER-SEED TEST RESULTS ===")
-    print(df_rep)
+    for metric in ["auc_pr", "lift10", "auc_roc"]:
+        vals = [t[metric] for t in all_test]
+        print(f"  {metric:12s} = {np.mean(vals):.5f} ± {np.std(vals, ddof=0):.5f}")
 
-    mean = df_rep.mean(numeric_only=True)
-    std = df_rep.std(numeric_only=True)
+    u_means = [t["u_mean"] for t in all_test]
+    print(f"  {'u_mean':12s} = {np.mean(u_means):.5f} ± {np.std(u_means, ddof=0):.5f}")
 
-    csv_file = out_dir / f"{dataset}_edl_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.csv"
-    df_rep.to_csv(csv_file)
-
-    summary = {
-        "dataset": dataset,
-        "split_seed": split_seed,
-        "train_seeds": train_seeds,
-        "best_edl_file": str(best_file),
-        "best_tag": best_tag,
-        "config": best["config"],
-        "mean": mean.to_dict(),
-        "std": std.to_dict(),
-    }
-
-    json_file = out_dir / f"{dataset}_edl_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.json"
-    json_file.write_text(json.dumps(summary, indent=2))
-
-    print("\n=== MEAN ± STD (TEST, fixed split) ===")
-    for k in mean.index:
-        print(f"{k}: {mean[k]:.4f} ± {std[k]:.4f}")
-
-    print("\n✅ Saved per-seed CSV to:", csv_file)
-    print("✅ Saved summary JSON to:", json_file)
+    print(f"\nConfig: edl_loss={cfg.edl_loss}, head_hidden_dim={cfg.head_hidden_dim}, "
+          f"kl_coef={cfg.kl_coef}, anneal_epochs={cfg.anneal_epochs}")
 
 
 if __name__ == "__main__":

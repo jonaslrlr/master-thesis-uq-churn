@@ -5,13 +5,11 @@ import json
 import numpy as np
 
 from thesis_uq.seed import set_seed
-from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 from thesis_uq.data.splits import train_valid_test_split
 from thesis_uq.models.tabnet_mc_dropout import train_tabnet_mc_dropout, mc_predict
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
-from thesis_uq.eval._cli import parse_eval_args
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
 DATASET = "cell2cell"
@@ -21,8 +19,19 @@ SPLIT_SEED = 42
 # Training randomness only
 TRAIN_SEEDS = [1, 2, 3, 4]
 
-# Dropout tuning grid
+# ──────────────────────────────────────────────────────────────────────
+# Dropout tuning grids
+#
+# GLU dropout: applied inside feature transformer (existing)
+# Attention dropout: applied after prior scaling in AttentiveTransformer (NEW)
+#
+# The grid below creates three ablation groups:
+#   A) GLU-only:           attn_dropout=0.0, dropout > 0
+#   B) GLU + attention:    attn_dropout > 0, dropout > 0
+#   C) attention-only:     attn_dropout > 0, dropout=0   (optional, for analysis)
+# ──────────────────────────────────────────────────────────────────────
 DROPOUT_GRID = [0.10, 0.12, 0.15, 0.18, 0.20, 0.25]
+ATTN_DROPOUT_GRID = [0.0, 0.05, 0.10, 0.15]   # NEW: 0.0 = GLU-only baseline
 MC_SAMPLES = 100
 
 DEVICE_NAME = "cpu"
@@ -31,12 +40,13 @@ DEVICE_NAME = "cpu"
 BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cell2cell_baseline_split42_trainseeds1-4.json"
 
 
-
 def main():
     print("Device:", DEVICE_NAME)
     print("Split seed (fixed):", SPLIT_SEED)
     print("Train seeds (vary):", TRAIN_SEEDS)
-    print("Dropout grid:", DROPOUT_GRID, "MC samples:", MC_SAMPLES)
+    print("GLU dropout grid:", DROPOUT_GRID)
+    print("Attn dropout grid:", ATTN_DROPOUT_GRID)
+    print("MC samples:", MC_SAMPLES)
     print("Baseline best:", BASELINE_BEST_FILE)
 
     best_dir = REPO_ROOT / "reports" / "best"
@@ -53,9 +63,7 @@ def main():
     print(BASE)
 
     # Load data once
-    csv_path = REPO_ROOT / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
-    df = load_telco_csv(csv_path)
-    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
+    X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
 
     # Fixed split ONCE
     X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
@@ -87,93 +95,96 @@ def main():
     best_cfg = None
 
     for drop in DROPOUT_GRID:
-        tag = f"drop{drop}"
-        cfg = {
-            **tabnet_kwargs,
-            **train_kwargs,
-            "dropout": drop,
-            "mc_samples": MC_SAMPLES,
-            "split_seed": SPLIT_SEED,
-            "train_seeds": TRAIN_SEEDS,
-        }
+        for attn_drop in ATTN_DROPOUT_GRID:
+            tag = f"drop{drop}_attn{attn_drop}"
+            cfg = {
+                **tabnet_kwargs,
+                **train_kwargs,
+                "dropout": drop,
+                "attn_dropout": attn_drop,    # NEW
+                "mc_samples": MC_SAMPLES,
+                "split_seed": SPLIT_SEED,
+                "train_seeds": TRAIN_SEEDS,
+            }
 
-        print("\n=== CONFIG", tag, "===")
+            print(f"\n=== CONFIG {tag} ===")
 
-        valid_praucs, valid_lifts, valid_u_means = [], [], []
-        test_praucs, test_lifts, test_u_means = [], [], []
+            valid_praucs, valid_lifts, valid_u_means = [], [], []
+            test_praucs, test_lifts, test_u_means = [], [], []
 
-        for train_seed in TRAIN_SEEDS:
-            run_tag = f"mc_{tag}_split{SPLIT_SEED}_trainseed{train_seed}"
-            out_json = results_dir / f"{DATASET}_{run_tag}.json"
+            for train_seed in TRAIN_SEEDS:
+                run_tag = f"mc_{tag}_split{SPLIT_SEED}_trainseed{train_seed}"
+                out_json = results_dir / f"{DATASET}_{run_tag}.json"
 
-            # resume-safe
-            if out_json.exists():
-                payload = json.loads(out_json.read_text())
-                v = payload["metrics"]["valid"]
-                t = payload["metrics"]["test"]
-                valid_praucs.append(v["auc_pr"])
-                valid_lifts.append(v["lift10"])
-                valid_u_means.append(v["u_mean"])
-                test_praucs.append(t["auc_pr"])
-                test_lifts.append(t["lift10"])
-                test_u_means.append(t["u_mean"])
-                print(f"⏭️  SKIP {run_tag}")
-                continue
+                # resume-safe
+                if out_json.exists():
+                    payload = json.loads(out_json.read_text())
+                    v = payload["metrics"]["valid"]
+                    t = payload["metrics"]["test"]
+                    valid_praucs.append(v["auc_pr"])
+                    valid_lifts.append(v["lift10"])
+                    valid_u_means.append(v["u_mean"])
+                    test_praucs.append(t["auc_pr"])
+                    test_lifts.append(t["lift10"])
+                    test_u_means.append(t["u_mean"])
+                    print(f"⏭️  SKIP {run_tag}")
+                    continue
 
-            set_seed(train_seed)
-            print(f"-> RUN {run_tag}")
+                set_seed(train_seed)
+                print(f"-> RUN {run_tag}")
 
-            clf = train_tabnet_mc_dropout(
-                X_train, y_train, X_valid, y_valid,
-                cat_idxs, cat_dims_list,
-                device_name=DEVICE_NAME,
-                dropout=drop,
-                tabnet_kwargs=tabnet_kwargs,
-                train_kwargs=train_kwargs,
-                seed=train_seed,  # ✅ critical (TabNetClassifier has its own seed param)
-            )
+                clf = train_tabnet_mc_dropout(
+                    X_train, y_train, X_valid, y_valid,
+                    cat_idxs, cat_dims_list,
+                    device_name=DEVICE_NAME,
+                    dropout=drop,
+                    attn_dropout=attn_drop,    # NEW
+                    tabnet_kwargs=tabnet_kwargs,
+                    train_kwargs=train_kwargs,
+                    seed=train_seed,
+                )
 
-            # MC predictions: valid + test
-            p_valid, u_valid = mc_predict(clf, X_valid, n_samples=MC_SAMPLES)
-            p_test,  u_test  = mc_predict(clf, X_test,  n_samples=MC_SAMPLES)
+                # MC predictions: valid + test
+                p_valid, u_valid = mc_predict(clf, X_valid, n_samples=MC_SAMPLES)
+                p_test,  u_test  = mc_predict(clf, X_test,  n_samples=MC_SAMPLES)
 
-            valid_rep = standard_report(y_valid, p_valid)
-            test_rep = standard_report(y_test, p_test)
+                valid_rep = standard_report(y_valid, p_valid)
+                test_rep = standard_report(y_test, p_test)
 
-            # store mean uncertainty for diagnostics
-            valid_rep["u_mean"] = float(np.mean(u_valid))
-            test_rep["u_mean"] = float(np.mean(u_test))
+                # store mean uncertainty for diagnostics
+                valid_rep["u_mean"] = float(np.mean(u_valid))
+                test_rep["u_mean"] = float(np.mean(u_test))
 
-            meta = RunMeta(dataset=DATASET, method="mc_dropout", seed=train_seed, tag=run_tag)
-            save_metrics_json(out_json, meta, metrics={"valid": valid_rep, "test": test_rep}, config=cfg)
+                meta = RunMeta(dataset=DATASET, method="mc_dropout", seed=train_seed, tag=run_tag)
+                save_metrics_json(out_json, meta, metrics={"valid": valid_rep, "test": test_rep}, config=cfg)
 
-            valid_praucs.append(valid_rep["auc_pr"])
-            valid_lifts.append(valid_rep["lift10"])
-            valid_u_means.append(valid_rep["u_mean"])
+                valid_praucs.append(valid_rep["auc_pr"])
+                valid_lifts.append(valid_rep["lift10"])
+                valid_u_means.append(valid_rep["u_mean"])
 
-            test_praucs.append(test_rep["auc_pr"])
-            test_lifts.append(test_rep["lift10"])
-            test_u_means.append(test_rep["u_mean"])
+                test_praucs.append(test_rep["auc_pr"])
+                test_lifts.append(test_rep["lift10"])
+                test_u_means.append(test_rep["u_mean"])
 
-        v_mean = float(np.mean(valid_praucs)); v_std = float(np.std(valid_praucs, ddof=0))
-        l_mean = float(np.mean(valid_lifts));  l_std = float(np.std(valid_lifts, ddof=0))
-        u_mean = float(np.mean(valid_u_means)); u_std = float(np.std(valid_u_means, ddof=0))
+            v_mean = float(np.mean(valid_praucs)); v_std = float(np.std(valid_praucs, ddof=0))
+            l_mean = float(np.mean(valid_lifts));  l_std = float(np.std(valid_lifts, ddof=0))
+            u_mean = float(np.mean(valid_u_means)); u_std = float(np.std(valid_u_means, ddof=0))
 
-        agg_rows.append((tag, v_mean, v_std, l_mean, l_std, u_mean, u_std))
+            agg_rows.append((tag, v_mean, v_std, l_mean, l_std, u_mean, u_std))
 
-        print(f"VALID prauc={v_mean:.4f}±{v_std:.4f}  lift10={l_mean:.4f}±{l_std:.4f}  u_mean={u_mean:.4f}±{u_std:.4f}")
+            print(f"VALID prauc={v_mean:.4f}±{v_std:.4f}  lift10={l_mean:.4f}±{l_std:.4f}  u_mean={u_mean:.4f}±{u_std:.4f}")
 
-        cand = (v_mean, l_mean)
-        if cand > best_tuple:
-            best_tuple = cand
-            best_key = tag
-            best_cfg = cfg
+            cand = (v_mean, l_mean)
+            if cand > best_tuple:
+                best_tuple = cand
+                best_key = tag
+                best_cfg = cfg
 
     agg_rows.sort(key=lambda x: (x[1], x[3]), reverse=True)
 
     print("\n=== LEADERBOARD (VALID mean over training seeds) ===")
     for tag, v_mean, v_std, l_mean, l_std, u_mean, u_std in agg_rows:
-        print(f"{tag:8s}  prauc={v_mean:.4f}±{v_std:.4f}  lift10={l_mean:.4f}±{l_std:.4f}  u_mean={u_mean:.4f}±{u_std:.4f}")
+        print(f"{tag:25s}  prauc={v_mean:.4f}±{v_std:.4f}  lift10={l_mean:.4f}±{l_std:.4f}  u_mean={u_mean:.4f}±{u_std:.4f}")
 
     # Save best config
     best_file = best_dir / f"{DATASET}_mc_dropout_split{SPLIT_SEED}_trainseeds{TRAIN_SEEDS[0]}-{TRAIN_SEEDS[-1]}.json"
@@ -187,7 +198,7 @@ def main():
     print("\nSaved best MC-dropout config to:", best_file)
     print("Best:", best_key, "with (mean_valid_prauc, mean_valid_lift) =", best_tuple)
 
-    # Optional: save ONE canonical NPZ for reranking/plots (clean)
+    # Save ONE canonical NPZ for reranking/plots (clean)
     canonical_train_seed = TRAIN_SEEDS[0]
     set_seed(canonical_train_seed)
 
@@ -196,6 +207,7 @@ def main():
         cat_idxs, cat_dims_list,
         device_name=DEVICE_NAME,
         dropout=best_cfg["dropout"],
+        attn_dropout=best_cfg["attn_dropout"],   # NEW
         tabnet_kwargs=tabnet_kwargs,
         train_kwargs=train_kwargs,
         seed=canonical_train_seed,

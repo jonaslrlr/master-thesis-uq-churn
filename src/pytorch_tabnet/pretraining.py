@@ -195,6 +195,8 @@ class TabNetPretrainer(TabModel):
             epsilon=self.epsilon,
             virtual_batch_size=self.virtual_batch_size,
             momentum=self.momentum,
+            dropout=self.dropout,
+            attn_dropout=self.attn_dropout,  # NEW
             mask_type=self.mask_type,
             group_attention_matrix=self.group_matrix.to(self.device),
         ).to(self.device)

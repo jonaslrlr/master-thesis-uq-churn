@@ -12,7 +12,9 @@ def train_tabnet_baseline(
     mask_type="entmax",
     lr=2e-2, weight_decay=1e-5,
     max_epochs=50, patience=15,
-    batch_size=1024, virtual_batch_size=128,dropout=0.0,
+    batch_size=1024, virtual_batch_size=128,
+    dropout=0.0,
+    attn_dropout=0.0,   # NEW: attention-path dropout
     seed=0
 ):
     clf = TabNetClassifier(
@@ -27,7 +29,8 @@ def train_tabnet_baseline(
         mask_type=mask_type,
         device_name=device_name,
         verbose=1,
-        dropout=dropout,  # baseline deterministic
+        dropout=dropout,
+        attn_dropout=attn_dropout,  # NEW
         seed=seed,
     )
 

@@ -53,6 +53,7 @@ class TabNetEncoder(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         dropout=0.0,              # NEW
+        attn_dropout=0.0,         # NEW: attention-path dropout
         mask_type="sparsemax",
         group_attention_matrix=None,
     ):
@@ -85,6 +86,11 @@ class TabNetEncoder(torch.nn.Module):
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in all batch norm
+        dropout : float
+            Dropout rate for GLU feature transformer blocks
+        attn_dropout : float
+            Dropout rate for attention logits (applied after prior scaling,
+            before sparsemax/entmax). Enables MC Dropout over feature-selection.
         mask_type : str
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
@@ -105,6 +111,7 @@ class TabNetEncoder(torch.nn.Module):
         self.mask_type = mask_type
         self.initial_bn = BatchNorm1d(self.input_dim, momentum=0.01)
         self.dropout = dropout
+        self.attn_dropout = attn_dropout
         self.group_attention_matrix = group_attention_matrix
 
         if self.group_attention_matrix is None:
@@ -159,6 +166,7 @@ class TabNetEncoder(torch.nn.Module):
                 virtual_batch_size=self.virtual_batch_size,
                 momentum=momentum,
                 mask_type=self.mask_type,
+                attn_dropout=attn_dropout,   # NEW: attention dropout
             )
             self.feat_transformers.append(transformer)
             self.att_transformers.append(attention)
@@ -315,6 +323,7 @@ class TabNetPretraining(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         dropout=0.0,              # NEW
+        attn_dropout=0.0,         # NEW: attention-path dropout
         mask_type="sparsemax",
         n_shared_decoder=1,
         n_indep_decoder=1,
@@ -366,7 +375,8 @@ class TabNetPretraining(torch.nn.Module):
             epsilon=epsilon,
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
-            dropout=dropout,   # NEW
+            dropout=dropout,          # NEW
+            attn_dropout=attn_dropout, # NEW
             mask_type=mask_type,
             group_attention_matrix=self.embedder.embedding_group_matrix,
         )
@@ -421,6 +431,7 @@ class TabNetNoEmbeddings(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         dropout=0.0,              # NEW
+        attn_dropout=0.0,         # NEW: attention-path dropout
         mask_type="sparsemax",
         group_attention_matrix=None,
     ):
@@ -452,6 +463,10 @@ class TabNetNoEmbeddings(torch.nn.Module):
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in all batch norm
+        dropout : float
+            Dropout rate for GLU feature transformer blocks
+        attn_dropout : float
+            Dropout rate for attention logits (before sparsemax/entmax)
         mask_type : str
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
@@ -471,6 +486,7 @@ class TabNetNoEmbeddings(torch.nn.Module):
         self.virtual_batch_size = virtual_batch_size
         self.mask_type = mask_type
         self.dropout = dropout
+        self.attn_dropout = attn_dropout
         self.initial_bn = BatchNorm1d(self.input_dim, momentum=0.01)
 
         self.encoder = TabNetEncoder(
@@ -485,7 +501,8 @@ class TabNetNoEmbeddings(torch.nn.Module):
             epsilon=epsilon,
             virtual_batch_size=virtual_batch_size,
             momentum=momentum,
-            dropout=dropout,   # NEW
+            dropout=dropout,          # NEW
+            attn_dropout=attn_dropout, # NEW
             mask_type=mask_type,
             group_attention_matrix=group_attention_matrix
         )
@@ -535,7 +552,8 @@ class TabNet(torch.nn.Module):
         epsilon=1e-15,
         virtual_batch_size=128,
         momentum=0.02,
-        dropout=0.0,              # NEW 
+        dropout=0.0,              # NEW
+        attn_dropout=0.0,         # NEW: attention-path dropout
         mask_type="sparsemax",
         group_attention_matrix=[],
     ):
@@ -575,6 +593,10 @@ class TabNet(torch.nn.Module):
             Batch size for Ghost Batch Normalization
         momentum : float
             Float value between 0 and 1 which will be used for momentum in all batch norm
+        dropout : float
+            Dropout rate for GLU feature transformer blocks
+        attn_dropout : float
+            Dropout rate for attention logits (before sparsemax/entmax)
         mask_type : str
             Either "sparsemax" or "entmax" : this is the masking function to use
         group_attention_matrix : torch matrix
@@ -595,6 +617,7 @@ class TabNet(torch.nn.Module):
         self.n_independent = n_independent
         self.n_shared = n_shared
         self.dropout = dropout
+        self.attn_dropout = attn_dropout
         self.mask_type = mask_type
 
         if self.n_steps <= 0:
@@ -611,22 +634,22 @@ class TabNet(torch.nn.Module):
         self.post_embed_dim = self.embedder.post_embed_dim
 
         self.tabnet = TabNetNoEmbeddings(
-         input_dim=self.post_embed_dim,
-         output_dim=output_dim,
-         n_d=n_d,
-         n_a=n_a,
-         n_steps=n_steps,
-         gamma=gamma,
-         n_independent=n_independent,
-          n_shared=n_shared,
-          epsilon=epsilon,
-          virtual_batch_size=virtual_batch_size,
-          momentum=momentum,
-         dropout=dropout,
-         mask_type=mask_type,
-         group_attention_matrix=self.embedder.embedding_group_matrix,
-)
-
+            input_dim=self.post_embed_dim,
+            output_dim=output_dim,
+            n_d=n_d,
+            n_a=n_a,
+            n_steps=n_steps,
+            gamma=gamma,
+            n_independent=n_independent,
+            n_shared=n_shared,
+            epsilon=epsilon,
+            virtual_batch_size=virtual_batch_size,
+            momentum=momentum,
+            dropout=dropout,
+            attn_dropout=attn_dropout,  # NEW
+            mask_type=mask_type,
+            group_attention_matrix=self.embedder.embedding_group_matrix,
+        )
 
     def forward(self, x):
         x = self.embedder(x)
@@ -646,6 +669,7 @@ class AttentiveTransformer(torch.nn.Module):
         virtual_batch_size=128,
         momentum=0.02,
         mask_type="sparsemax",
+        attn_dropout=0.0,         # NEW: attention-path dropout
     ):
         """
         Initialize an attention transformer.
@@ -662,6 +686,10 @@ class AttentiveTransformer(torch.nn.Module):
             Float value between 0 and 1 which will be used for momentum in batch norm
         mask_type : str
             Either "sparsemax" or "entmax" : this is the masking function to use
+        attn_dropout : float
+            Dropout rate applied to attention logits after prior scaling,
+            before the mask selector (sparsemax/entmax). This enables
+            MC Dropout to capture feature-selection uncertainty.
         """
         super(AttentiveTransformer, self).__init__()
         self.fc = Linear(input_dim, group_dim, bias=False)
@@ -681,10 +709,18 @@ class AttentiveTransformer(torch.nn.Module):
                 "Please choose either sparsemax" + "or entmax as masktype"
             )
 
+        # NEW: attention dropout — applied after prior scaling, before selector
+        self.attn_drop = (
+            torch.nn.Dropout(attn_dropout)
+            if attn_dropout and attn_dropout > 0
+            else torch.nn.Identity()
+        )
+
     def forward(self, priors, processed_feat):
         x = self.fc(processed_feat)
         x = self.bn(x)
         x = torch.mul(x, priors)
+        x = self.attn_drop(x)        # NEW: MC Dropout over attention logits
         x = self.selector(x)
         return x
 
@@ -777,9 +813,6 @@ class GLU_Block(torch.nn.Module):
             x = x + self.glu_layers[glu_id](x)
             x = x * scale
         return x
-
-        
-
 
 
 class GLU_Layer(torch.nn.Module):

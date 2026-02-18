@@ -1,209 +1,328 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.preprocessing import StandardScaler
 
+
+# ─────────────────────────────────────────────────────────────────────
+# Config
+# ─────────────────────────────────────────────────────────────────────
 
 @dataclass
 class LaplaceConfig:
-    prior_prec: float = 1.0          # Gaussian prior precision on weights (L2 strength)
-    max_iter: int = 200              # LBFGS steps for MAP
-    n_samples: int = 300             # posterior weight samples for predictive mean/std
-    jitter: float = 1e-6             # numeric stability added to Hessian
-    standardize: bool = True         # standardize TabNet features
+    """Configuration for the Laplace posterior computation."""
+    prior_precision: float = 1e-2       # τ: isotropic Gaussian prior precision
+    pred_method: str = "probit"         # "probit" (fast, closed-form) or "mc" (sampling)
+    mc_samples: int = 200               # number of posterior samples if pred_method="mc"
 
 
-@torch.no_grad()
-def extract_tabnet_representation(clf, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
-    """
-    Extract TabNet decision representation h(x) = sum_t d_t (dim = n_d)
-    from a trained TabNetClassifier clf (local fork).
-    Assumes deterministic backbone (dropout=0 recommended).
-    """
-    clf.network.eval()
-    X_tensor = torch.from_numpy(X).float()
-    loader = DataLoader(TensorDataset(X_tensor), batch_size=batch_size, shuffle=False)
-
-    feats = []
-    for (xb,) in loader:
-        xb = xb.to(clf.device).float()
-        x_emb = clf.network.embedder(xb)
-        steps_output, _ = clf.network.tabnet.encoder(x_emb)
-        h = torch.sum(torch.stack(steps_output, dim=0), dim=0)  # (B, n_d)
-        feats.append(h.detach().cpu())
-
-    return torch.cat(feats, dim=0).numpy()
-
-
-def fit_map_logreg_torch(
-    Z: np.ndarray,
-    y: np.ndarray,
-    prior_prec: float,
-    max_iter: int,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    MAP logistic regression on features Z (N,d) with Gaussian prior precision prior_prec.
-    Returns:
-      w_map (d+1,) and X_aug (N,d+1) as torch.double tensors.
-    Bias is the last element of w_map and is NOT regularized.
-    """
-    X = torch.from_numpy(Z).double()
-    y_t = torch.from_numpy(y).double()
-
-    N, d = X.shape
-    X_aug = torch.cat([X, torch.ones(N, 1, dtype=torch.double)], dim=1)  # (N, d+1)
-
-    w = torch.zeros(d + 1, dtype=torch.double, requires_grad=True)
-    opt = torch.optim.LBFGS([w], max_iter=max_iter, line_search_fn="strong_wolfe")
-
-    def closure():
-        opt.zero_grad()
-        logits = X_aug @ w
-        loss_data = torch.nn.functional.binary_cross_entropy_with_logits(logits, y_t)
-        loss_prior = 0.5 * prior_prec * torch.sum(w[:-1] ** 2)  # no prior on bias
-        loss = loss_data + loss_prior
-        loss.backward()
-        return loss
-
-    opt.step(closure)
-    return w.detach(), X_aug.detach()
-
+# ─────────────────────────────────────────────────────────────────────
+# Representation extraction
+# ─────────────────────────────────────────────────────────────────────
 
 @torch.no_grad()
-def laplace_posterior_cov(
-    X_aug: torch.Tensor,
-    w_map: torch.Tensor,
-    prior_prec: float,
-    jitter: float,
-) -> torch.Tensor:
+def extract_representations(clf, X: np.ndarray, batch_size: int = 2048) -> np.ndarray:
     """
-    Full-cov Laplace posterior for logistic regression head:
-      Sigma = (X^T R X + prior_prec*I)^(-1)
-    where R = diag(p*(1-p)).
-    Bias is unregularized (I[-1,-1]=0).
+    Extract TabNet encoder representations h(x) ∈ R^{n_d} for all samples.
+
+    Uses a forward hook on final_mapping to capture the input (= representation)
+    without modifying the model or re-implementing the forward pass.
+
+    Parameters
+    ----------
+    clf : TabNetClassifier
+        Trained TabNet model (from pytorch_tabnet).
+    X : np.ndarray, shape (N, input_dim)
+        Feature matrix.
+
+    Returns
+    -------
+    H : np.ndarray, shape (N, n_d)
+        Encoder representations.
     """
-    logits = X_aug @ w_map
-    p = torch.sigmoid(logits)
-    r = p * (1.0 - p)  # (N,)
+    network = clf.network
+    network.eval()
 
-    XR = X_aug * r.unsqueeze(1)
-    H = X_aug.T @ XR  # (d+1, d+1)
+    captured = []
 
-    d1 = X_aug.shape[1]
-    I = torch.eye(d1, dtype=torch.double, device=X_aug.device)
-    I[-1, -1] = 0.0  # do not regularize bias
+    def hook_fn(module, input, output):
+        # input is a tuple; input[0] is the representation h ∈ (B, n_d)
+        captured.append(input[0].detach().cpu())
 
-    A = H + prior_prec * I + jitter * torch.eye(d1, dtype=torch.double, device=X_aug.device)
-    Sigma = torch.linalg.inv(A)
-    return Sigma
+    # The nesting is: clf.network (TabNet) → .tabnet (TabNetNoEmbeddings) → .final_mapping
+    handle = network.tabnet.final_mapping.register_forward_hook(hook_fn)
 
+    try:
+        ds = TensorDataset(torch.from_numpy(X).float())
+        dl = DataLoader(ds, batch_size=batch_size, shuffle=False)
+        for (xb,) in dl:
+            xb = xb.to(clf.device)
+            network(xb)  # triggers the hook
+    finally:
+        handle.remove()
 
-@torch.no_grad()
-def predict_map_probs(Z: np.ndarray, w_map: torch.Tensor) -> np.ndarray:
-    """Deterministic MAP head probs for class 1."""
-    X = torch.from_numpy(Z).double()
-    N = X.shape[0]
-    X_aug = torch.cat([X, torch.ones(N, 1, dtype=torch.double)], dim=1)
-    logits = X_aug @ w_map
-    return torch.sigmoid(logits).cpu().numpy()
+    return torch.cat(captured, dim=0).numpy()
 
 
-@torch.no_grad()
-def predict_laplace_probs_std(
-    Z: np.ndarray,
-    w_map: torch.Tensor,
-    Sigma: torch.Tensor,
-    n_samples: int,
-    seed: int = 0,
+# ─────────────────────────────────────────────────────────────────────
+# MAP weight extraction
+# ─────────────────────────────────────────────────────────────────────
+
+def extract_map_weights(clf) -> np.ndarray:
+    """
+    Extract the MAP logit-difference weights from TabNet's final_mapping.
+
+    For K=2 softmax, P(y=1|x) = σ((w₁ - w₀)ᵀ h(x)), so the effective
+    binary classification weight vector is w_diff = W[1] - W[0].
+
+    Parameters
+    ----------
+    clf : TabNetClassifier
+        Trained TabNet model.
+
+    Returns
+    -------
+    w_diff : np.ndarray, shape (n_d,)
+        MAP logit-difference weights.
+    """
+    W = clf.network.tabnet.final_mapping.weight.detach().cpu().numpy()  # (2, n_d)
+    assert W.shape[0] == 2, f"Expected binary classification (2 classes), got {W.shape[0]}"
+    return W[1] - W[0]  # (n_d,)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Laplace posterior
+# ─────────────────────────────────────────────────────────────────────
+
+@dataclass
+class LaplacePosterior:
+    """
+    Stores the Laplace approximation to the posterior over the
+    logit-difference weight vector.
+
+    Attributes
+    ----------
+    w_map : np.ndarray, shape (n_d,)
+        MAP logit-difference weights from final_mapping.
+    cov : np.ndarray, shape (n_d, n_d)
+        Posterior covariance Σ = H⁻¹.
+    prior_precision : float
+        Prior precision τ used to compute H.
+    log_marginal_likelihood : float
+        Log evidence approximation: log p(D|τ) ≈ log p(D|w_MAP) - ½ log|H| + (n_d/2) log τ
+    """
+    w_map: np.ndarray
+    cov: np.ndarray
+    prior_precision: float
+    log_marginal_likelihood: float
+
+
+def fit_laplace(
+    clf,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    prior_precision: float = 1e-2,
+    batch_size: int = 2048,
+) -> LaplacePosterior:
+    """
+    Fit a last-layer Laplace approximation using TabNet's own MAP weights.
+
+    Steps:
+    1. Extract encoder representations H = [h(x₁), ..., h(xₙ)] ∈ R^{N × n_d}
+    2. Extract MAP weights w = final_mapping.weight[1] - weight[0] ∈ R^{n_d}
+    3. Compute logits f = H w, then πᵢ = σ(fᵢ)
+    4. Compute GGN Hessian: H = Hᵀ diag(π(1-π)) H + τI
+    5. Invert to get posterior covariance Σ = H⁻¹
+    6. (Optional) Compute log marginal likelihood for model selection
+
+    Parameters
+    ----------
+    clf : TabNetClassifier
+        Trained model whose final_mapping weights define w_MAP.
+    X_train : np.ndarray, shape (N, input_dim)
+        Training features (same data the model was trained on).
+    y_train : np.ndarray, shape (N,)
+        Training labels (for log-likelihood computation).
+    prior_precision : float
+        τ: isotropic Gaussian prior precision on w.
+        Larger τ → tighter prior → less posterior uncertainty.
+
+    Returns
+    -------
+    LaplacePosterior
+    """
+    # 1. Representations
+    H = extract_representations(clf, X_train, batch_size=batch_size)  # (N, n_d)
+    N, n_d = H.shape
+
+    # 2. MAP weights
+    w_map = extract_map_weights(clf)  # (n_d,)
+    assert w_map.shape == (n_d,), f"Shape mismatch: w_map {w_map.shape} vs n_d={n_d}"
+
+    # 3. MAP logits and probabilities
+    logits = H @ w_map  # (N,)
+    pi = 1.0 / (1.0 + np.exp(-logits))  # σ(f), (N,)
+    pi = np.clip(pi, 1e-8, 1 - 1e-8)   # numerical stability
+
+    # 4. GGN Hessian: H_ggn = Hᵀ diag(π(1-π)) H + τI
+    #    For N=40k, n_d=64: (64, N) @ diag @ (N, 64) = (64, 64) — very fast
+    D = pi * (1.0 - pi)  # (N,), Hessian of logistic loss w.r.t. logit
+    H_weighted = H * np.sqrt(D)[:, None]  # (N, n_d) — equivalent to sqrt(D) H
+    hessian = H_weighted.T @ H_weighted + prior_precision * np.eye(n_d)  # (n_d, n_d)
+
+    # 5. Posterior covariance via Cholesky (more stable than direct inverse)
+    L = np.linalg.cholesky(hessian)  # H = L Lᵀ
+    L_inv = np.linalg.solve_triangular(L, np.eye(n_d), lower=True)
+    cov = L_inv.T @ L_inv  # Σ = H⁻¹ = (L Lᵀ)⁻¹ = L⁻ᵀ L⁻¹
+
+    # 6. Log marginal likelihood (Laplace evidence approximation)
+    #    log p(D|τ) ≈ log p(D|w_MAP) - ½ log|H| + (n_d/2) log(τ)
+    #
+    #    log p(D|w_MAP) = Σᵢ [yᵢ log πᵢ + (1-yᵢ) log(1-πᵢ)]
+    #    log|H| = 2 Σ log(diag(L))
+    log_lik = np.sum(y_train * np.log(pi) + (1 - y_train) * np.log(1 - pi))
+    log_det_H = 2.0 * np.sum(np.log(np.diag(L)))
+    log_prior = -0.5 * prior_precision * np.dot(w_map, w_map)
+    log_marglik = log_lik + log_prior - 0.5 * log_det_H + 0.5 * n_d * np.log(prior_precision)
+
+    return LaplacePosterior(
+        w_map=w_map,
+        cov=cov,
+        prior_precision=prior_precision,
+        log_marginal_likelihood=log_marglik,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Prediction
+# ─────────────────────────────────────────────────────────────────────
+
+def _predict_probit(
+    posterior: LaplacePosterior,
+    H: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Sample head weights from N(w_map, Sigma) and return predictive mean/std of probs.
-    Note: std(prob) can be small due to sigmoid squashing; still useful for ranking/triage.
+    Probit approximation to the Bayesian predictive distribution.
+
+    P(y=1|x*,D) ≈ σ( μ* / √(1 + π/8 · v*) )
+
+    where μ* = wᵀh(x*), v* = h(x*)ᵀ Σ h(x*).
+
+    Returns (probabilities, uncertainties) where uncertainty = v* (logit variance).
     """
-    torch.manual_seed(seed)
+    mu = H @ posterior.w_map  # (N,)
 
-    X = torch.from_numpy(Z).double()
-    N = X.shape[0]
-    X_aug = torch.cat([X, torch.ones(N, 1, dtype=torch.double)], dim=1)
+    # Vectorised quadratic form: v_i = hᵢᵀ Σ hᵢ
+    # Efficient: (H @ Σ) ⊙ H summed over columns
+    H_Sigma = H @ posterior.cov  # (N, n_d)
+    v = np.sum(H_Sigma * H, axis=1)  # (N,)
+    v = np.maximum(v, 0.0)  # ensure non-negative (numerical)
 
-    # robust cholesky
-    # if Sigma is not SPD due to numerics, add diagonal jitter progressively
-    diag_jitter = 0.0
-    for _ in range(6):
-        try:
-            L = torch.linalg.cholesky(Sigma + diag_jitter * torch.eye(Sigma.shape[0], dtype=torch.double))
-            break
-        except RuntimeError:
-            diag_jitter = 1e-6 if diag_jitter == 0.0 else diag_jitter * 10.0
-    else:
-        # last resort: use eigendecomposition (rare)
-        evals, evecs = torch.linalg.eigh(Sigma)
-        evals = torch.clamp(evals, min=1e-12)
-        L = evecs @ torch.diag(torch.sqrt(evals))
+    # Probit approximation: scale logit by 1/sqrt(1 + π/8 * v)
+    kappa = 1.0 / np.sqrt(1.0 + (np.pi / 8.0) * v)
+    p = 1.0 / (1.0 + np.exp(-kappa * mu))
 
-    d1 = w_map.shape[0]
-    eps = torch.randn(n_samples, d1, dtype=torch.double)
-    w_samps = w_map.unsqueeze(0) + eps @ L.T  # (S, d1)
-
-    logits = X_aug @ w_samps.T  # (N, S)
-    probs = torch.sigmoid(logits)  # (N, S)
-
-    mean_prob = probs.mean(dim=1).cpu().numpy()
-    std_prob = probs.std(dim=1, unbiased=False).cpu().numpy()
-    return mean_prob, std_prob
+    return p, v
 
 
-def laplace_from_tabnet_features(
-    feat_train: np.ndarray,
-    y_train: np.ndarray,
-    feat_valid: np.ndarray,
-    feat_test: np.ndarray,
+def _predict_mc(
+    posterior: LaplacePosterior,
+    H: np.ndarray,
+    n_samples: int = 200,
+    rng_seed: int = 42,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    MC sampling from the Laplace posterior.
+
+    Sample w⁽ˢ⁾ ~ N(w_MAP, Σ), compute σ(w⁽ˢ⁾ᵀ h(x*)) for each sample,
+    return mean as probability and std as uncertainty.
+    """
+    rng = np.random.default_rng(rng_seed)
+    n_d = posterior.w_map.shape[0]
+
+    # Sample from posterior via Cholesky of covariance
+    L_cov = np.linalg.cholesky(posterior.cov + 1e-10 * np.eye(n_d))
+    z = rng.standard_normal((n_samples, n_d))  # (S, n_d)
+    w_samples = posterior.w_map[None, :] + z @ L_cov.T  # (S, n_d)
+
+    # Compute logits for all samples × all datapoints: (S, N)
+    logits = w_samples @ H.T  # (S, N)
+    probs = 1.0 / (1.0 + np.exp(-logits))  # (S, N)
+
+    p_mean = probs.mean(axis=0)  # (N,)
+    p_std = probs.std(axis=0)    # (N,)
+
+    return p_mean, p_std
+
+
+def laplace_predict(
+    posterior: LaplacePosterior,
+    clf,
+    X: np.ndarray,
     cfg: LaplaceConfig,
-    seed: int,
-) -> Tuple[
-    np.ndarray, np.ndarray,           # p_map_valid, p_map_test
-    np.ndarray, np.ndarray,           # p_lap_valid_mean, u_valid_stdprob
-    np.ndarray, np.ndarray,           # p_lap_test_mean,  u_test_stdprob
-]:
+    batch_size: int = 2048,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Fit MAP + Laplace head on TabNet features.
-    Returns:
-      p_map_valid, p_map_test,
-      p_lap_valid_mean, u_valid_stdprob,
-      p_lap_test_mean,  u_test_stdprob
+    Bayesian predictive distribution using last-layer Laplace.
+
+    Parameters
+    ----------
+    posterior : LaplacePosterior
+        Fitted Laplace posterior.
+    clf : TabNetClassifier
+        Trained model (for extracting representations).
+    X : np.ndarray
+        Feature matrix.
+    cfg : LaplaceConfig
+        Prediction configuration.
+
+    Returns
+    -------
+    p : np.ndarray, shape (N,)
+        Predictive P(y=1|x, D).
+    u : np.ndarray, shape (N,)
+        Uncertainty measure.
+        - If probit: logit variance v* (larger = more uncertain)
+        - If mc: predictive std (larger = more uncertain)
     """
-    if cfg.standardize:
-        scaler = StandardScaler()
-        Z_train = scaler.fit_transform(feat_train)
-        Z_valid = scaler.transform(feat_valid)
-        Z_test  = scaler.transform(feat_test)
+    H = extract_representations(clf, X, batch_size=batch_size)
+
+    if cfg.pred_method == "probit":
+        return _predict_probit(posterior, H)
+    elif cfg.pred_method == "mc":
+        return _predict_mc(posterior, H, n_samples=cfg.mc_samples)
     else:
-        Z_train, Z_valid, Z_test = feat_train, feat_valid, feat_test
+        raise ValueError(f"Unknown pred_method: {cfg.pred_method!r}. Choose 'probit' or 'mc'.")
 
-    w_map, X_aug_train = fit_map_logreg_torch(
-        Z_train, y_train, prior_prec=cfg.prior_prec, max_iter=cfg.max_iter
-    )
-    Sigma = laplace_posterior_cov(
-        X_aug_train, w_map, prior_prec=cfg.prior_prec, jitter=cfg.jitter
-    )
 
-    p_map_valid = predict_map_probs(Z_valid, w_map)
-    p_map_test  = predict_map_probs(Z_test,  w_map)
+# ─────────────────────────────────────────────────────────────────────
+# Diagnostics
+# ─────────────────────────────────────────────────────────────────────
 
-    p_lap_valid_mean, u_valid_stdprob = predict_laplace_probs_std(
-        Z_valid, w_map, Sigma, n_samples=cfg.n_samples, seed=seed + 10_000
-    )
-    p_lap_test_mean, u_test_stdprob = predict_laplace_probs_std(
-        Z_test,  w_map, Sigma, n_samples=cfg.n_samples, seed=seed + 20_000
-    )
+def posterior_diagnostics(posterior: LaplacePosterior) -> dict:
+    """
+    Compute diagnostic statistics about the Laplace posterior.
 
-    return (
-        p_map_valid, p_map_test,
-        p_lap_valid_mean, u_valid_stdprob,
-        p_lap_test_mean,  u_test_stdprob,
-    )
+    Useful for sanity checking: if the posterior is too tight
+    (all eigenvalues huge), uncertainty will be near-zero everywhere.
+    If too loose, predictions degrade.
+    """
+    eigvals = np.linalg.eigvalsh(posterior.cov)
+    w_norm = np.linalg.norm(posterior.w_map)
+
+    return {
+        "n_d": len(posterior.w_map),
+        "w_map_norm": float(w_norm),
+        "prior_precision": float(posterior.prior_precision),
+        "log_marginal_likelihood": float(posterior.log_marginal_likelihood),
+        "cov_eigval_min": float(eigvals.min()),
+        "cov_eigval_max": float(eigvals.max()),
+        "cov_eigval_median": float(np.median(eigvals)),
+        "cov_condition_number": float(eigvals.max() / max(eigvals.min(), 1e-15)),
+        "cov_trace": float(np.trace(posterior.cov)),
+    }

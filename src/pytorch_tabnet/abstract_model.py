@@ -54,7 +54,8 @@ class TabModel(BaseEstimator):
     n_shared: int = 2
     epsilon: float = 1e-15
     momentum: float = 0.02
-    dropout: float = 0.0   # NEW
+    dropout: float = 0.0
+    attn_dropout: float = 0.0   # NEW: attention-path dropout for MC Dropout
     lambda_sparse: float = 1e-3
     seed: int = 0
     clip_value: int = 1
@@ -617,8 +618,9 @@ class TabModel(BaseEstimator):
             n_shared=self.n_shared,
             epsilon=self.epsilon,
             virtual_batch_size=self.virtual_batch_size,
-            momentum=self.momentum, #NEW
+            momentum=self.momentum,
             dropout=self.dropout,
+            attn_dropout=self.attn_dropout,  # NEW
             mask_type=self.mask_type,
             group_attention_matrix=self.group_matrix.to(self.device),
         ).to(self.device)

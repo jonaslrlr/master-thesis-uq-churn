@@ -10,3 +10,10 @@ src/thesis_uq/data/
 # packaging artifacts
 *.egg-info/
 src/*.egg-info/
+
+# macOS
+.DS_Store
+
+# experiment outputs
+logs/
+reports/

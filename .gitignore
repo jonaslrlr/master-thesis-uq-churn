@@ -1,13 +1,12 @@
-# macOS
-.DS_Store
-
-# python
+# local env / caches
+.venv/
 __pycache__/
 *.pyc
 
-# experiment outputs
-logs/
-reports/
+# data (local)
+data/
+src/thesis_uq/data/
 
-# optional: arrays / artifacts
-*.npz
+# packaging artifacts
+*.egg-info/
+src/*.egg-info/

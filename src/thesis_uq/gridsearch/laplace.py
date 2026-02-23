@@ -20,7 +20,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "cell2cell"
+DATASET = "telco"
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
 
@@ -41,7 +41,7 @@ PRIOR_PRECISION_GRID = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]
 
 DEVICE_NAME = "cpu"
 
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cell2cell_baseline_split42_trainseeds1-4.json"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "telco_baseline_split42_trainseeds1-4.json"
 
 
 def fit_lr_reranker(p_valid, u_valid, y_valid):
@@ -159,8 +159,8 @@ def main():
                 X_train, y_train, X_valid, y_valid,
                 cat_idxs, cat_dims_list,
                 device_name=DEVICE_NAME,
-                tabnet_kwargs=tabnet_kwargs,
-                train_kwargs=train_kwargs,
+                **tabnet_kwargs,
+                **train_kwargs,
                 seed=train_seed,
             )
 
@@ -277,13 +277,13 @@ def main():
     set_seed(canonical_train_seed)
 
     clf = train_tabnet_baseline(
-        X_train, y_train, X_valid, y_valid,
-        cat_idxs, cat_dims_list,
-        device_name=DEVICE_NAME,
-        tabnet_kwargs=tabnet_kwargs,
-        train_kwargs=train_kwargs,
-        seed=canonical_train_seed,
-    )
+                X_train, y_train, X_valid, y_valid,
+                cat_idxs, cat_dims_list,
+                device_name=DEVICE_NAME,
+                **tabnet_kwargs,
+                **train_kwargs,
+                seed=canonical_train_seed,
+            )
 
     posterior = fit_laplace(
         clf, X_train, y_train,

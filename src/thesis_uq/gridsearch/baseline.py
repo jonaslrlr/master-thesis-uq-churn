@@ -6,14 +6,14 @@ import json
 import numpy as np
 
 from thesis_uq.seed import set_seed
-from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
 from thesis_uq.data.splits import train_valid_test_split
 from thesis_uq.models.tabnet_baseline import train_tabnet_baseline
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json
+from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "telco"
+DATASET = "cell2cell"
 
 # training randomness only
 TRAIN_SEEDS = [1, 2, 3, 4]
@@ -44,9 +44,7 @@ def main():
     print("cat_emb_dim grid:", CAT_EMB_GRID)
 
     # Load data
-    csv_path = REPO_ROOT / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
-    df = load_telco_csv(csv_path)
-    X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = encode_tabular_for_tabnet(df)
+    X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
 
     # Fixed split ONCE
     X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)

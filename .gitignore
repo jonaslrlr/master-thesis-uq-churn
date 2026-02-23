@@ -17,3 +17,4 @@ src/*.egg-info/
 # experiment outputs
 logs/
 reports/
+*.log

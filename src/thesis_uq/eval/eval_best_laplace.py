@@ -8,13 +8,14 @@ For each fresh training seed:
      - MAP:    deterministic, σ(wᵀh(x)) — no uncertainty
      - Probit: closed-form Bayesian, σ(μ/√(1+π/8·v))
      - MC:     sample w ~ N(w_MAP, Σ), average σ(wᵀh(x))
-  4. Fit LR reranker on VALID (using probit predictions + uncertainty)
+  4. Fit LR reranker on VALID using MAP probability + Laplace uncertainty
+     (MAP prob is independent of the posterior — no double-counting)
   5. Report all metrics on TEST
 
 This gives a direct comparison:
   - MAP vs Probit: does the Bayesian correction help discrimination?
   - Probit vs MC: are they consistent? (they should be for well-behaved posteriors)
-  - MAP/Probit vs LR: does uncertainty add signal beyond probability?
+  - LR(MAP+u): does uncertainty add signal beyond the raw probability?
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
 DATASET = "cell2cell"
 SPLIT_SEED = 42
 
-EVAL_SEEDS = list(range(5, 15))  # seeds 5..14 (never seen during gridsearch)
+EVAL_SEEDS = list(range(5, 16))  # seeds 5..15 (never seen during gridsearch)
 
 DEVICE_NAME = "cpu"
 MC_SAMPLES_EVAL = 200
@@ -134,8 +135,8 @@ def main():
             X_train, y_train, X_valid, y_valid,
             cat_idxs, cat_dims_list,
             device_name=DEVICE_NAME,
-            tabnet_kwargs=tabnet_kwargs,
-            train_kwargs=train_kwargs,
+            **tabnet_kwargs,
+            **train_kwargs,
             seed=seed,
         )
 
@@ -146,10 +147,12 @@ def main():
               f"log_marglik={posterior.log_marginal_likelihood:.1f}")
 
         # 3a. MAP predictions (deterministic — no Laplace)
+        p_map_valid = clf.predict_proba(X_valid)[:, 1]
         p_map_test = clf.predict_proba(X_test)[:, 1]
         rep_map = standard_report(y_test, p_map_test)
 
         # 3b. Probit predictions (closed-form Bayesian)
+        p_probit_valid, u_probit_valid = laplace_predict(posterior, clf, X_valid, probit_cfg)
         p_probit_test, u_probit_test = laplace_predict(posterior, clf, X_test, probit_cfg)
         rep_probit = standard_report(y_test, p_probit_test)
 
@@ -157,10 +160,11 @@ def main():
         p_mc_test, u_mc_test = laplace_predict(posterior, clf, X_test, mc_cfg)
         rep_mc = standard_report(y_test, p_mc_test)
 
-        # 4. LR reranker (fit on VALID, apply to TEST)
-        p_probit_valid, u_probit_valid = laplace_predict(posterior, clf, X_valid, probit_cfg)
-        scaler, lr = fit_lr_reranker(p_probit_valid, u_probit_valid, y_valid)
-        p_lr_test = apply_lr_reranker(scaler, lr, p_probit_test, u_probit_test)
+        # 4. LR reranker: MAP probability + Laplace uncertainty (independent signals)
+        #    MAP prob has NO uncertainty baked in, so LR can learn the optimal
+        #    combination without double-counting.
+        scaler, lr = fit_lr_reranker(p_map_valid, u_probit_valid, y_valid)
+        p_lr_test = apply_lr_reranker(scaler, lr, p_map_test, u_probit_test)
         rep_lr = standard_report(y_test, p_lr_test)
 
         print(f"  LR coefs: u={lr.coef_[0][0]:.4f}, p={lr.coef_[0][1]:.4f}")
@@ -196,11 +200,11 @@ def main():
         rows.append(row)
         run_json.write_text(json.dumps(row, indent=2))
 
-        # Save NPZ for this seed
+        # Save NPZ for this seed (MAP prob + Laplace uncertainty for downstream)
         npz_path = uq_dir / f"{DATASET}_laplace_eval_split{SPLIT_SEED}_trainseed{seed}.npz"
         save_uq_scores_npz(npz_path,
-                           y_valid=y_valid, p_valid=p_probit_valid, u_valid=u_probit_valid,
-                           y_test=y_test, p_test=p_probit_test, u_test=u_probit_test)
+                           y_valid=y_valid, p_valid=p_map_valid, u_valid=u_probit_valid,
+                           y_test=y_test, p_test=p_map_test, u_test=u_probit_test)
 
         print(f"  MAP:    prauc={rep_map['auc_pr']:.5f}  lift10={rep_map['lift10']:.4f}")
         print(f"  Probit: prauc={rep_probit['auc_pr']:.5f}  lift10={rep_probit['lift10']:.4f}")
@@ -243,7 +247,7 @@ def main():
         "MAP (deterministic)": ["map_auc_pr", "map_lift10", "map_auc_roc"],
         "Probit (Bayesian)": ["probit_auc_pr", "probit_lift10", "probit_auc_roc"],
         "MC sampling": ["mc_auc_pr", "mc_lift10", "mc_auc_roc"],
-        "LR reranked": ["lr_auc_pr", "lr_lift10", "lr_auc_roc"],
+        "LR reranked (MAP+u)": ["lr_auc_pr", "lr_lift10", "lr_auc_roc"],
     }
 
     for section_name, keys in sections.items():

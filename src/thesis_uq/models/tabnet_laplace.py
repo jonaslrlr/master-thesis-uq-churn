@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
+from scipy.linalg import solve_triangular
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -177,7 +178,7 @@ def fit_laplace(
 
     # 5. Posterior covariance via Cholesky (more stable than direct inverse)
     L = np.linalg.cholesky(hessian)  # H = L Lᵀ
-    L_inv = np.linalg.solve_triangular(L, np.eye(n_d), lower=True)
+    L_inv = solve_triangular(L, np.eye(n_d), lower=True)
     cov = L_inv.T @ L_inv  # Σ = H⁻¹ = (L Lᵀ)⁻¹ = L⁻ᵀ L⁻¹
 
     # 6. Log marginal likelihood (Laplace evidence approximation)

@@ -36,6 +36,7 @@ from thesis_uq.models.tabnet_laplace import (
 )
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
+from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
@@ -92,6 +93,9 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
     uq_dir.mkdir(parents=True, exist_ok=True)
+
+    plot_dir = REPO_ROOT / "reports" / "plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
 
     # Load data
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
@@ -155,6 +159,12 @@ def main():
         p_probit_valid, u_probit_valid = laplace_predict(posterior, clf, X_valid, probit_cfg)
         p_probit_test, u_probit_test = laplace_predict(posterior, clf, X_test, probit_cfg)
         rep_probit = standard_report(y_test, p_probit_test)
+
+        plot_prob_vs_uncertainty(
+            y_test, p_map_test, u_probit_test,
+            title=f"Laplace | MAP P(churn) vs probit var | test seed={seed}",
+            save_path=plot_dir / f"{DATASET}_laplace_scatter_split{SPLIT_SEED}_seed{seed}.png",
+        )
 
         # 3c. MC predictions (sampled Bayesian)
         p_mc_test, u_mc_test = laplace_predict(posterior, clf, X_test, mc_cfg)

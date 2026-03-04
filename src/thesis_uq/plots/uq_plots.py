@@ -45,16 +45,34 @@ def plot_uncertainty_accuracy(
     plt.show()
 
 
-def plot_prob_vs_uncertainty(y_true, prob, unc):
+def plot_prob_vs_uncertainty(
+    y_true,
+    prob,
+    unc,
+    title="Predicted probability vs uncertainty",
+    save_path=None,
+):
+    y_true = np.asarray(y_true).reshape(-1)
+    prob = np.asarray(prob).reshape(-1)
+    unc = np.asarray(unc).reshape(-1)
+
     correct = ((prob >= 0.5).astype(int) == y_true)
-    plt.figure(figsize=(10, 6))
-    plt.scatter(prob[correct], unc[correct], alpha=0.35, s=20, label="Correct")
-    plt.scatter(prob[~correct], unc[~correct], alpha=0.6, s=20, label="Incorrect")
-    plt.axvline(x=0.5, color="gray", linestyle="--")
-    plt.xlabel("Predicted P(Churn=1)")
-    plt.ylabel("Uncertainty")
-    plt.title("Predicted probability vs uncertainty (MC Dropout)")
-    plt.grid(True, linestyle="--", alpha=0.5)
-    plt.legend()
-    plt.show()
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.scatter(unc[correct],  prob[correct],  alpha=0.3, s=15,
+               c="tab:blue", label="Correct",   edgecolors="none")
+    ax.scatter(unc[~correct], prob[~correct], alpha=0.5, s=15,
+               c="tab:red",  label="Incorrect", edgecolors="none")
+    ax.axhline(y=0.5, color="gray", linestyle="--", alpha=0.6)
+    ax.set_xlabel("Uncertainty")
+    ax.set_ylabel("Predicted P(Churn = 1)")
+    ax.set_title(title)
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.legend()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        plt.show()
 

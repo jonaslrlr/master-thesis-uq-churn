@@ -36,10 +36,9 @@ class EDLConfig:
     # EDL
     kl_coef: float = 1.0
     anneal_epochs: int = 50
-    edl_loss: str = "mse"           # NEW: "mse" or "ce" (cross-entropy Bayes risk)
 
     # evidential head architecture
-    head_hidden_dim: int = 0        # NEW: 0 = single linear (original), >0 = 2-layer MLP
+    head_hidden_dim: int = 0        # 0 = single linear (original), >0 = 2-layer MLP
 
     # dropout (EDL backbone is typically deterministic, but allow override)
     dropout: float = 0.0
@@ -136,7 +135,7 @@ class TabNetEDL(torch.nn.Module):
             group_attention_matrix=self.embedding_group_matrix,
         )
 
-        # NEW: configurable evidential head
+        # configurable evidential head
         self.head = _build_evidence_head(cfg.n_d, K, cfg.head_hidden_dim)
 
     def _sync_group_matrices(self):
@@ -207,7 +206,7 @@ def _dirichlet_kl(alpha: torch.Tensor, K: int) -> torch.Tensor:
 
 def _kl_term(alpha: torch.Tensor, y_onehot: torch.Tensor, epoch: int, cfg: EDLConfig) -> torch.Tensor:
     """
-    Annealed KL regulariser shared by both MSE and CE losses.
+    Annealed KL regulariser.
     Uses the "removal of non-misleading evidence" trick from Sensoy et al.:
     only penalise evidence for *incorrect* classes.
     """
@@ -235,37 +234,6 @@ def edl_mse_bayes_risk(alpha: torch.Tensor, y_true: torch.Tensor, epoch: int, cf
     mse = ((y - p) ** 2 + var).sum(dim=1).mean()
 
     return mse + _kl_term(alpha, y, epoch, cfg)
-
-
-def edl_ce_bayes_risk(alpha: torch.Tensor, y_true: torch.Tensor, epoch: int, cfg: EDLConfig) -> torch.Tensor:
-    """
-    Sensoy et al. Eq. 4: Cross-entropy Bayes risk.
-
-    Data-fit = E_Dir[ -sum_k y_k log(p_k) ]
-             = sum_k y_k * ( digamma(S) - digamma(alpha_k) )
-
-    Advantages over MSE:
-      - Sharper gradients for misclassified examples (does not plateau
-        when predictions are already close).
-      - Better calibrated evidence in practice (Sensoy §4.2).
-    """
-    K = alpha.shape[1]
-    y = F.one_hot(y_true, num_classes=K).float()
-
-    S = alpha.sum(dim=1, keepdim=True)
-    ce = (y * (torch.digamma(S) - torch.digamma(alpha))).sum(dim=1).mean()
-
-    return ce + _kl_term(alpha, y, epoch, cfg)
-
-
-def _get_edl_loss_fn(cfg: EDLConfig):
-    """Return the appropriate EDL loss based on config."""
-    if cfg.edl_loss == "mse":
-        return edl_mse_bayes_risk
-    elif cfg.edl_loss == "ce":
-        return edl_ce_bayes_risk
-    else:
-        raise ValueError(f"Unknown edl_loss: {cfg.edl_loss!r}. Choose 'mse' or 'ce'.")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -304,9 +272,6 @@ def train_tabnet_edl(
         shuffle=True,
     )
 
-    # Select loss function from config
-    loss_fn = _get_edl_loss_fn(cfg)
-
     best_score = -np.inf
     best_state = None
     patience_ctr = 0
@@ -322,7 +287,7 @@ def train_tabnet_edl(
             opt.zero_grad()
             _, alpha, _, _, M_loss = model(xb)
 
-            loss = loss_fn(alpha, yb, epoch=epoch, cfg=cfg) + lambda_sparse * M_loss
+            loss = edl_mse_bayes_risk(alpha, yb, epoch=epoch, cfg=cfg) + lambda_sparse * M_loss
             loss.backward()
             opt.step()
             losses.append(loss.item())

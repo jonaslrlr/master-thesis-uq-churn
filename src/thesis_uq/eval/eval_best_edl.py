@@ -9,7 +9,7 @@ For each fresh training seed:
   5. Fit TWO LR rerankers on VALID → apply to TEST:
      a) LR(p_edl, u):  original — but p and u share S, near-redundant
      b) LR(p_base, u): independent signals — baseline prob has no
-        Dirichlet coupling to vacuity (Yameng's suggestion)
+        Dirichlet coupling to vacuity 
   6. Report all metrics on TEST
 
 EDL reranking note:
@@ -41,6 +41,7 @@ from thesis_uq.models.tabnet_edl import (
 from thesis_uq.models.tabnet_baseline import train_tabnet_baseline
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
+from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
@@ -101,6 +102,9 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     uq_dir.mkdir(parents=True, exist_ok=True)
 
+    plot_dir = REPO_ROOT / "reports" / "plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
     # Load data + fixed split
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
     X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
@@ -123,7 +127,6 @@ def main():
         momentum=CFG.get("momentum", 0.02),
         kl_coef=CFG["kl_coef"],
         anneal_epochs=CFG["anneal_epochs"],
-        edl_loss=CFG.get("edl_loss", "mse"),
         head_hidden_dim=CFG.get("head_hidden_dim", 0),
     )
 
@@ -192,6 +195,12 @@ def main():
         # 4. Baseline predictions (independent of Dirichlet)
         p_valid_base = baseline_clf.predict_proba(X_valid)[:, 1]
         p_test_base  = baseline_clf.predict_proba(X_test)[:, 1]
+
+        plot_prob_vs_uncertainty(
+            y_test, p_test_edl, u_test,
+            title=f"EDL | P(churn) vs vacuity | test seed={seed}",
+            save_path=plot_dir / f"{DATASET}_edl_scatter_split{SPLIT_SEED}_seed{seed}.png",
+        )
 
         # 5. Base EDL metrics
         rep_edl = standard_report(y_test, p_test_edl)
@@ -324,7 +333,7 @@ def main():
     print(f"    {'base_lr_coef_u':25s} = {mean['base_lr_coef_u']:.4f} ± {std['base_lr_coef_u']:.4f}")
     print(f"    {'base_lr_coef_p':25s} = {mean['base_lr_coef_p']:.4f} ± {std['base_lr_coef_p']:.4f}")
 
-    print(f"\n  Config: edl_loss={cfg.edl_loss}, head_hidden_dim={cfg.head_hidden_dim}, "
+    print(f"\n  Config: head_hidden_dim={cfg.head_hidden_dim}, "
           f"kl_coef={cfg.kl_coef}, anneal_epochs={cfg.anneal_epochs}")
 
     print(f"\n✅ Saved per-seed CSV to: {csv_file}")

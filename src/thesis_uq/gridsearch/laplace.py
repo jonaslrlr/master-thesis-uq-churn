@@ -20,7 +20,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "telco"
+DATASET = "cell2cell"
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
 

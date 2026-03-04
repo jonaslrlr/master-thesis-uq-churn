@@ -16,6 +16,8 @@ from thesis_uq.models.tabnet_mc_dropout import train_tabnet_mc_dropout, mc_predi
 # dataset loaders
 from thesis_uq.data.registry import load_for_tabnet
 from thesis_uq.data.telco import load_telco_csv, encode_tabular_for_tabnet
+from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
+from thesis_uq.io import save_uq_scores_npz
 
 
 def parse_seeds(s: str) -> list[int]:
@@ -141,6 +143,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    uq_dir = repo_root / "reports" / "uq_scores"
+    uq_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir = repo_root / "reports" / "plots"
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
     rows = []
 
     for s in train_seeds:
@@ -186,8 +193,19 @@ def main():
         p_mc, u_mc = mc_predict(clf, X_test, n_samples=mc_samples)
         rep_mc = standard_report(y_test, p_mc)
 
+        plot_prob_vs_uncertainty(
+            y_test, p_mc, u_mc,
+            title=f"MC Dropout | P(churn) vs std | test seed={s}",
+            save_path=plot_dir / f"{dataset}_mc_dropout_scatter_split{split_seed}_seed{s}.png",
+        )
+
         # LR rerank (fit on VALID using same model)
         p_valid, u_valid = mc_predict(clf, X_valid, n_samples=mc_samples)
+        save_uq_scores_npz(
+            uq_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseed{s}.npz",
+            y_valid=y_valid, p_valid=p_valid, u_valid=u_valid,
+            y_test=y_test, p_test=p_mc, u_test=u_mc)
+
         scaler, lr = fit_lr_reranker(p_valid, u_valid, y_valid)
         p_lr = apply_lr_reranker(scaler, lr, p_mc, u_mc)
         rep_lr = standard_report(y_test, p_lr)

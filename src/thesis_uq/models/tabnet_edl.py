@@ -251,7 +251,7 @@ def train_tabnet_edl(
 ) -> TabNetEDL:
     """
     Train EDL TabNet backbone + evidential head.
-    Early stopping on VALID PR-AUC using your standard_report.
+    Early stopping on VALID PR-AUC using standard_report.
     """
     set_seed(seed)
     device = device_name

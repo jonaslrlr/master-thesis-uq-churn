@@ -219,17 +219,23 @@ def main():
             "det_auc_pr": rep_det["auc_pr"],
             "det_acc": rep_det["acc"],
             "det_lift10": rep_det["lift10"],
+            "det_ece": rep_det["ece"],
+            "det_brier": rep_det["brier"],
 
             "mc_auc_roc": rep_mc["auc_roc"],
             "mc_auc_pr": rep_mc["auc_pr"],
             "mc_acc": rep_mc["acc"],
             "mc_lift10": rep_mc["lift10"],
             "mc_u_mean": float(np.mean(u_mc)),
+            "mc_ece": rep_mc["ece"],
+            "mc_brier": rep_mc["brier"],
 
             "lr_auc_roc": rep_lr["auc_roc"],
             "lr_auc_pr": rep_lr["auc_pr"],
             "lr_acc": rep_lr["acc"],
             "lr_lift10": rep_lr["lift10"],
+            "lr_ece": rep_lr["ece"],
+            "lr_brier": rep_lr["brier"],
 
             "lr_coef_u": float(lr.coef_[0][0]),
             "lr_coef_p": float(lr.coef_[0][1]),
@@ -251,7 +257,7 @@ def main():
     mean = df_rep.mean(numeric_only=True)
     std = df_rep.std(numeric_only=True)
 
-    # filenames: assume contiguous range; still fine if not (it’s just a label)
+    # filenames: assume contiguous range; still fine if not (it's just a label)
     csv_file = out_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.csv"
     df_rep.to_csv(csv_file)
 

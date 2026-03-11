@@ -139,7 +139,7 @@ def fit_laplace(
     3. Compute logits f = H w, then πᵢ = σ(fᵢ)
     4. Compute GGN Hessian: H = Hᵀ diag(π(1-π)) H + τI
     5. Invert to get posterior covariance Σ = H⁻¹
-    6. (Optional) Compute log marginal likelihood for model selection
+    6. Compute log marginal likelihood for model selection
 
     Parameters
     ----------
@@ -308,10 +308,6 @@ def laplace_predict(
 def posterior_diagnostics(posterior: LaplacePosterior) -> dict:
     """
     Compute diagnostic statistics about the Laplace posterior.
-
-    Useful for sanity checking: if the posterior is too tight
-    (all eigenvalues huge), uncertainty will be near-zero everywhere.
-    If too loose, predictions degrade.
     """
     eigvals = np.linalg.eigvalsh(posterior.cov)
     w_norm = np.linalg.norm(posterior.w_map)

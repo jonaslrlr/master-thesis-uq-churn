@@ -14,7 +14,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "telco"
+DATASET = "bank"
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
 
@@ -42,7 +42,7 @@ DEVICE_NAME = "cpu"
 LAMBDA_SPARSE = 1e-3
 
 # Load best baseline backbone
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "telco_baseline_split42_trainseeds1-4.json"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "bank_baseline_split42_trainseeds1-4.json"
 
 
 def main():

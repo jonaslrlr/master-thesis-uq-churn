@@ -13,7 +13,7 @@ from thesis_uq.io import RunMeta, save_metrics_json
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "cell2cell"
+DATASET = "bank"
 
 # training randomness only
 TRAIN_SEEDS = [1, 2, 3, 4]
@@ -31,8 +31,8 @@ FIXED = dict(
     weight_decay=1e-5,
     max_epochs=200,
     patience=30,
-    batch_size=1024,
-    virtual_batch_size=128,
+    batch_size=512, ## 1024 for cell2cell
+    virtual_batch_size=64, #128 for cell2cell
     dropout=0.0,
 )
 

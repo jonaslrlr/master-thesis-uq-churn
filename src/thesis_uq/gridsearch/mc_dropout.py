@@ -12,8 +12,8 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "telco"
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "telco_baseline_split42_trainseeds1-4.json"
+DATASET = "delft"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "delft_baseline_split42_trainseeds1-4.json"
 # Fixed split: test is isolated and constant
 SPLIT_SEED = 42
 

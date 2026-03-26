@@ -40,7 +40,7 @@ from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "cell2cell"
+DATASET = "delft"
 SPLIT_SEED = 42
 
 EVAL_SEEDS = list(range(5, 16))  # seeds 5..15 (never seen during gridsearch)

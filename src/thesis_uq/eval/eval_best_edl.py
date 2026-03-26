@@ -70,7 +70,7 @@ def apply_lr_reranker(scaler, lr, p, u):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cell2cell",
-                        choices=["cell2cell", "telco", "bank"])
+                        choices=["cell2cell", "telco", "bank", "delft"])
     args = parser.parse_args()
 
     DATASET = args.dataset

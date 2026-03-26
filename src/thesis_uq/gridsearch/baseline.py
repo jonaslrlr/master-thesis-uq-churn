@@ -13,7 +13,7 @@ from thesis_uq.io import RunMeta, save_metrics_json
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "bank"
+DATASET = "delft"
 
 # training randomness only
 TRAIN_SEEDS = [1, 2, 3, 4]

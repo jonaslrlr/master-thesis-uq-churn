@@ -47,7 +47,7 @@ def main():
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
 
     # Fixed split ONCE
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED, presplit=(30000, 30000) if DATASET == "cdr" else None)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED, presplit=(30000, 30000) if DATASET == "cdr" else (4939, 1058) if DATASET == "chile" else None)
     print("Fixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     # Backbone grid

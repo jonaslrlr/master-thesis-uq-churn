@@ -223,7 +223,7 @@ def main():
     out_dir = repo_root / "reports" / "uncertainty"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    datasets = [args.dataset] if args.dataset else ["bank", "cell2cell", "telco", "delft", "cdr"]
+    datasets = [args.dataset] if args.dataset else ["bank", "cell2cell", "telco", "delft", "cdr", "chile"]
 
     # Methods that save NPZ files with uncertainty
     methods = ["mc_dropout", "laplace", "edl"]

@@ -19,3 +19,4 @@ logs/
 reports/
 *.log
 papers/
+data/raw/

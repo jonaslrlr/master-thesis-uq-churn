@@ -115,7 +115,7 @@ def main():
 
     # load + fixed split once
     X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_tabnet_data(dataset, repo_root)
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=split_seed, presplit=(30000, 30000) if dataset == "cdr" else None)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=split_seed, presplit=(30000, 30000) if dataset == "cdr" else (4939, 1058) if dataset == "chile" else None)
     print("\nFixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     dropout = float(cfg["dropout"])

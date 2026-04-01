@@ -20,7 +20,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "delft"
+DATASET = "cdr"
 
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
@@ -42,7 +42,7 @@ PRIOR_PRECISION_GRID = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]
 
 DEVICE_NAME = "cpu"
 
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "delft_baseline_split42_trainseeds1-4.json"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cdr_baseline_split42_trainseeds1-4.json"
 
 
 def fit_lr_reranker(p_valid, u_valid, y_valid):
@@ -83,7 +83,7 @@ def main():
 
     # Load data
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED, presplit=(30000, 30000) if DATASET == "cdr" else None)
     print("\nFixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     tabnet_kwargs = dict(

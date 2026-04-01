@@ -40,7 +40,7 @@ from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "delft"
+DATASET = "cdr"
 SPLIT_SEED = 42
 
 EVAL_SEEDS = list(range(5, 16))  # seeds 5..15 (never seen during gridsearch)
@@ -99,7 +99,7 @@ def main():
 
     # Load data
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED, presplit=(30000, 30000) if DATASET == "cdr" else None)
     print("\nSplit shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     tabnet_kwargs = dict(

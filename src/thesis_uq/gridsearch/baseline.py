@@ -13,7 +13,7 @@ from thesis_uq.io import RunMeta, save_metrics_json
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "delft"
+DATASET = "cdr"
 
 # training randomness only
 TRAIN_SEEDS = [1, 2, 3, 4]
@@ -47,7 +47,7 @@ def main():
     X, y, _, _, _, cat_idxs, cat_dims_list = load_for_tabnet(DATASET, REPO_ROOT)
 
     # Fixed split ONCE
-    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED)
+    X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=SPLIT_SEED, presplit=(30000, 30000) if DATASET == "cdr" else None)
     print("Fixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     # Backbone grid

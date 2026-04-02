@@ -20,7 +20,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "cdr"
+DATASET = "chile"
 
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
@@ -42,7 +42,7 @@ PRIOR_PRECISION_GRID = [1e-4, 1e-3, 1e-2, 1e-1, 1.0, 10.0]
 
 DEVICE_NAME = "cpu"
 
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cdr_baseline_split42_trainseeds1-4.json"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "chile_baseline_split42_trainseeds1-4.json"
 
 
 def fit_lr_reranker(p_valid, u_valid, y_valid):

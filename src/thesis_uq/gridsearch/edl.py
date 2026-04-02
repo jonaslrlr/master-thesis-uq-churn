@@ -14,8 +14,8 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.data.registry import load_for_tabnet
 
 REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
-DATASET = "cdr"
-BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "cdr_baseline_split42_trainseeds1-4.json"
+DATASET = "chile"
+BASELINE_BEST_FILE = REPO_ROOT / "reports" / "best" / "chile_baseline_split42_trainseeds1-4.json"
 SPLIT_SEED = 42
 TRAIN_SEEDS = [1, 2, 3, 4]
 

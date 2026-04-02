@@ -287,7 +287,7 @@ def train_tabnet_edl(
             opt.zero_grad()
             _, alpha, _, _, M_loss = model(xb)
 
-            loss = edl_mse_bayes_risk(alpha, yb, epoch=epoch, cfg=cfg) + lambda_sparse * M_loss
+            loss = edl_mse_bayes_risk(alpha, yb, epoch=epoch, cfg=cfg) - lambda_sparse * M_loss
             loss.backward()
             opt.step()
             losses.append(loss.item())

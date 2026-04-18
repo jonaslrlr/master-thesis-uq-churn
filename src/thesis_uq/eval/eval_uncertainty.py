@@ -226,7 +226,7 @@ def main():
     datasets = [args.dataset] if args.dataset else ["bank", "cell2cell", "telco", "delft", "cdr", "chile"]
 
     # Methods that save NPZ files with uncertainty
-    methods = ["mc_dropout", "laplace", "edl"]
+    methods = ["mc_dropout", "laplace", "edl", "cp_single", "cp_cv", "cp_cv_std"]
 
     for dataset in datasets:
         print(f"\n{'=' * 70}")

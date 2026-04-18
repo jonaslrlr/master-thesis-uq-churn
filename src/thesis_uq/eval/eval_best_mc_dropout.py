@@ -12,6 +12,7 @@ from thesis_uq.seed import set_seed
 from thesis_uq.data.splits import train_valid_test_split
 from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.models.tabnet_mc_dropout import train_tabnet_mc_dropout, mc_predict
+from thesis_uq.models.tabnet_baseline import train_tabnet_baseline          # NEW
 
 # dataset loaders
 from thesis_uq.data.registry import load_for_tabnet
@@ -43,7 +44,6 @@ def load_tabnet_data(dataset: str, repo_root: Path):
         csv_path = repo_root / "data/raw/kaggle_churn/WA_Fn-UseC_-Telco-Customer-Churn.csv"
         df = load_telco_csv(csv_path)
         return encode_tabular_for_tabnet(df)
-    # everything else through registry (e.g., cell2cell)
     return load_for_tabnet(dataset, repo_root)
 
 
@@ -76,6 +76,11 @@ def main():
         default=None,
         help="Path to reports/best/{dataset}_mc_dropout_split{split}_trainseeds1-4.json",
     )
+    ap.add_argument(                                                         # NEW
+        "--baseline_best_file",                                              # NEW
+        default=None,                                                        # NEW
+        help="Path to reports/best/{dataset}_baseline_split{split}_trainseeds1-4.json",
+    )                                                                        # NEW
     ap.add_argument("--repo_root", default=None)
     args = ap.parse_args()
 
@@ -89,6 +94,9 @@ def main():
     best_file = Path(args.best_file).expanduser().resolve() if args.best_file else (
         repo_root / "reports" / "best" / f"{dataset}_mc_dropout_split{split_seed}_trainseeds1-4.json"
     )
+    baseline_best_file = Path(args.baseline_best_file).expanduser().resolve() if args.baseline_best_file else (
+        repo_root / "reports" / "best" / f"{dataset}_baseline_split{split_seed}_trainseeds1-4.json"
+    )                                                                        # NEW
 
     print("Repo root:", repo_root)
     print("Dataset:", dataset)
@@ -96,9 +104,9 @@ def main():
     print("Fixed split seed:", split_seed)
     print("Eval train seeds:", train_seeds)
     print("Best MC file:", best_file)
+    print("Best baseline file:", baseline_best_file)                         # NEW
     print("MC samples (eval):", mc_samples)
 
-    # Fail loudly (prevents accidental telco usage)
     if not best_file.exists():
         raise FileNotFoundError(
             f"Best-file not found for dataset={dataset!r}.\nExpected:\n  {best_file}\n"
@@ -106,6 +114,10 @@ def main():
         )
     if not best_file.name.startswith(f"{dataset}_"):
         raise ValueError(f"Best-file name {best_file.name!r} does not match dataset={dataset!r}")
+    if not baseline_best_file.exists():                                      # NEW
+        raise FileNotFoundError(                                             # NEW
+            f"Baseline best-file not found.\nExpected:\n  {baseline_best_file}"
+        )                                                                    # NEW
 
     best = json.loads(best_file.read_text())
     cfg = best["config"]
@@ -113,13 +125,20 @@ def main():
     print("\nUsing best MC config:", best_tag)
     print(cfg)
 
+    # ── NEW: load baseline config ────────────────────────────────────
+    base_best = json.loads(baseline_best_file.read_text())
+    base_cfg = base_best["config"]
+    print("\nBaseline config:", base_best.get("best_tag", "unknown"))
+    print(json.dumps(base_cfg, indent=2))
+    # ─────────────────────────────────────────────────────────────────
+
     # load + fixed split once
     X, y, features, cat_cols, cat_dims, cat_idxs, cat_dims_list = load_tabnet_data(dataset, repo_root)
     X_train, y_train, X_valid, y_valid, X_test, y_test = train_valid_test_split(X, y, seed=split_seed, presplit=(30000, 30000) if dataset == "cdr" else (4939, 1058) if dataset == "chile" else None)
     print("\nFixed split shapes:", X_train.shape, X_valid.shape, X_test.shape)
 
     dropout = float(cfg["dropout"])
-    attn_dropout = float(cfg.get("attn_dropout", 0.0))  # optional/backwards-compatible
+    attn_dropout = float(cfg.get("attn_dropout", 0.0))
 
     tabnet_kwargs = dict(
         n_d=int(cfg["n_d"]),
@@ -152,16 +171,22 @@ def main():
 
     for s in train_seeds:
         run_json = run_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseed{s}.json"
+
+        # ── NEW: cache check — skip only if decoupled fields exist ───
         if run_json.exists():
             row = json.loads(run_json.read_text())
-            rows.append(row)
-            print(f"⏭️  SKIP seed={s} (cached)")
-            continue
+            if "det_lr_auc_pr" in row and "base_lr_auc_pr" in row:
+                rows.append(row)
+                print(f"⏭️  SKIP seed={s} (cached with decoupled rerankers)")
+                continue
+            else:
+                print(f"🔄 RE-RUN seed={s} (missing decoupled reranker fields)")
+        # ─────────────────────────────────────────────────────────────
 
         set_seed(s)
         print(f"\n=== TRAIN SEED {s} ===")
 
-        # Train model (handle older/newer signature gracefully)
+        # Train MCD model
         try:
             clf = train_tabnet_mc_dropout(
                 X_train, y_train, X_valid, y_valid,
@@ -174,7 +199,6 @@ def main():
                 seed=s,
             )
         except TypeError:
-            # older function signature: no attn_dropout
             clf = train_tabnet_mc_dropout(
                 X_train, y_train, X_valid, y_valid,
                 cat_idxs, cat_dims_list,
@@ -185,36 +209,82 @@ def main():
                 seed=s,
             )
 
-        # DET (dropout off)
-        p_det = clf.predict_proba(X_test)[:, 1]
-        rep_det = standard_report(y_test, p_det)
+        # ── NEW: train baseline model (no dropout, standard CE) ──────
+        baseline_clf = train_tabnet_baseline(
+            X_train, y_train, X_valid, y_valid,
+            cat_idxs, cat_dims_list,
+            device_name=device,
+            n_d=int(base_cfg["n_d"]), n_a=int(base_cfg["n_a"]),
+            n_steps=int(base_cfg["n_steps"]), gamma=float(base_cfg["gamma"]),
+            mask_type=str(base_cfg["mask_type"]),
+            cat_emb_dim=int(base_cfg["cat_emb_dim"]),
+            lr=float(base_cfg["lr"]), weight_decay=float(base_cfg["weight_decay"]),
+            max_epochs=int(base_cfg["max_epochs"]), patience=int(base_cfg["patience"]),
+            batch_size=int(base_cfg["batch_size"]),
+            virtual_batch_size=int(base_cfg["virtual_batch_size"]),
+            seed=s,
+        )
+        # ─────────────────────────────────────────────────────────────
 
-        # MC (mean + uncertainty)
-        p_mc, u_mc = mc_predict(clf, X_test, n_samples=mc_samples)
-        rep_mc = standard_report(y_test, p_mc)
+        # DET: MCD model, dropout OFF
+        p_det_test = clf.predict_proba(X_test)[:, 1]
+        p_det_valid = clf.predict_proba(X_valid)[:, 1]                       # NEW
+        rep_det = standard_report(y_test, p_det_test)
+
+        # MC: MCD model, dropout ON, T forward passes
+        p_mc_test, u_mc_test = mc_predict(clf, X_test, n_samples=mc_samples)
+        p_mc_valid, u_mc_valid = mc_predict(clf, X_valid, n_samples=mc_samples)
+        rep_mc = standard_report(y_test, p_mc_test)
+
+        # ── NEW: baseline predictions ────────────────────────────────
+        p_base_test = baseline_clf.predict_proba(X_test)[:, 1]
+        p_base_valid = baseline_clf.predict_proba(X_valid)[:, 1]
+        rep_base = standard_report(y_test, p_base_test)
+        # ─────────────────────────────────────────────────────────────
 
         plot_prob_vs_uncertainty(
-            y_test, p_mc, u_mc,
+            y_test, p_mc_test, u_mc_test,
             title=f"MC Dropout | P(churn) vs std | test seed={s}",
             save_path=plot_dir / f"{dataset}_mc_dropout_scatter_split{split_seed}_seed{s}.png",
         )
 
-        # LR rerank (fit on VALID using same model)
-        p_valid, u_valid = mc_predict(clf, X_valid, n_samples=mc_samples)
         save_uq_scores_npz(
             uq_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseed{s}.npz",
-            y_valid=y_valid, p_valid=p_valid, u_valid=u_valid,
-            y_test=y_test, p_test=p_mc, u_test=u_mc)
+            y_valid=y_valid, p_valid=p_mc_valid, u_valid=u_mc_valid,
+            y_test=y_test, p_test=p_mc_test, u_test=u_mc_test)
 
-        scaler, lr = fit_lr_reranker(p_valid, u_valid, y_valid)
-        p_lr = apply_lr_reranker(scaler, lr, p_mc, u_mc)
+        # ── Reranker A: LR(p_mc, u_mc) — original, coupled ──────────
+        scaler, lr = fit_lr_reranker(p_mc_valid, u_mc_valid, y_valid)
+        p_lr = apply_lr_reranker(scaler, lr, p_mc_test, u_mc_test)
         rep_lr = standard_report(y_test, p_lr)
 
-        print(f"  LR coefs: u={lr.coef_[0][0]:.4f}, p={lr.coef_[0][1]:.4f}, intercept={lr.intercept_[0]:.4f}")
+        # ── NEW: Reranker B: LR(p_det, u_mc) — same-model decoupled ─
+        sc_det, lr_det = fit_lr_reranker(p_det_valid, u_mc_valid, y_valid)
+        p_lr_det = apply_lr_reranker(sc_det, lr_det, p_det_test, u_mc_test)
+        rep_lr_det = standard_report(y_test, p_lr_det)
+
+        # ── NEW: Reranker C: LR(p_base, u_mc) — fully decoupled ─────
+        sc_base, lr_base = fit_lr_reranker(p_base_valid, u_mc_valid, y_valid)
+        p_lr_base = apply_lr_reranker(sc_base, lr_base, p_base_test, u_mc_test)
+        rep_lr_base = standard_report(y_test, p_lr_base)
+        # ─────────────────────────────────────────────────────────────
+
+        print(f"  LR(mc)   coefs: u={lr.coef_[0][0]:.4f}, p={lr.coef_[0][1]:.4f}")
+        print(f"  LR(det)  coefs: u={lr_det.coef_[0][0]:.4f}, p={lr_det.coef_[0][1]:.4f}")
+        print(f"  LR(base) coefs: u={lr_base.coef_[0][0]:.4f}, p={lr_base.coef_[0][1]:.4f}")
 
         row = {
             "train_seed": s,
 
+            # Baseline standalone (reference)
+            "base_auc_roc": rep_base["auc_roc"],
+            "base_auc_pr": rep_base["auc_pr"],
+            "base_acc": rep_base["acc"],
+            "base_lift10": rep_base["lift10"],
+            "base_ece": rep_base["ece"],
+            "base_brier": rep_base["brier"],
+
+            # DET: MCD model, dropout OFF
             "det_auc_roc": rep_det["auc_roc"],
             "det_auc_pr": rep_det["auc_pr"],
             "det_acc": rep_det["acc"],
@@ -222,31 +292,57 @@ def main():
             "det_ece": rep_det["ece"],
             "det_brier": rep_det["brier"],
 
+            # MC: MCD model, dropout ON, averaged
             "mc_auc_roc": rep_mc["auc_roc"],
             "mc_auc_pr": rep_mc["auc_pr"],
             "mc_acc": rep_mc["acc"],
             "mc_lift10": rep_mc["lift10"],
-            "mc_u_mean": float(np.mean(u_mc)),
+            "mc_u_mean": float(np.mean(u_mc_test)),
             "mc_ece": rep_mc["ece"],
             "mc_brier": rep_mc["brier"],
 
+            # Reranker A: LR(p_mc, u_mc) — original, coupled
             "lr_auc_roc": rep_lr["auc_roc"],
             "lr_auc_pr": rep_lr["auc_pr"],
             "lr_acc": rep_lr["acc"],
             "lr_lift10": rep_lr["lift10"],
             "lr_ece": rep_lr["ece"],
             "lr_brier": rep_lr["brier"],
-
             "lr_coef_u": float(lr.coef_[0][0]),
             "lr_coef_p": float(lr.coef_[0][1]),
             "lr_intercept": float(lr.intercept_[0]),
+
+            # Reranker B: LR(p_det, u_mc) — same-model decoupled
+            "det_lr_auc_roc": rep_lr_det["auc_roc"],
+            "det_lr_auc_pr": rep_lr_det["auc_pr"],
+            "det_lr_acc": rep_lr_det["acc"],
+            "det_lr_lift10": rep_lr_det["lift10"],
+            "det_lr_ece": rep_lr_det["ece"],
+            "det_lr_brier": rep_lr_det["brier"],
+            "det_lr_coef_u": float(lr_det.coef_[0][0]),
+            "det_lr_coef_p": float(lr_det.coef_[0][1]),
+            "det_lr_intercept": float(lr_det.intercept_[0]),
+
+            # Reranker C: LR(p_base, u_mc) — fully decoupled
+            "base_lr_auc_roc": rep_lr_base["auc_roc"],
+            "base_lr_auc_pr": rep_lr_base["auc_pr"],
+            "base_lr_acc": rep_lr_base["acc"],
+            "base_lr_lift10": rep_lr_base["lift10"],
+            "base_lr_ece": rep_lr_base["ece"],
+            "base_lr_brier": rep_lr_base["brier"],
+            "base_lr_coef_u": float(lr_base.coef_[0][0]),
+            "base_lr_coef_p": float(lr_base.coef_[0][1]),
+            "base_lr_intercept": float(lr_base.intercept_[0]),
         }
         rows.append(row)
         run_json.write_text(json.dumps(row, indent=2))
 
-        print("DET:", rep_det)
-        print("MC :", rep_mc, "| u_mean:", row["mc_u_mean"])
-        print("LR :", rep_lr)
+        print(f"  Base:      prauc={rep_base['auc_pr']:.5f}")
+        print(f"  DET:       prauc={rep_det['auc_pr']:.5f}")
+        print(f"  MC:        prauc={rep_mc['auc_pr']:.5f}  u_mean={row['mc_u_mean']:.4f}")
+        print(f"  LR(mc):    prauc={rep_lr['auc_pr']:.5f}")
+        print(f"  LR(det):   prauc={rep_lr_det['auc_pr']:.5f}")
+        print(f"  LR(base):  prauc={rep_lr_base['auc_pr']:.5f}")
 
     import pandas as pd
 
@@ -257,7 +353,6 @@ def main():
     mean = df_rep.mean(numeric_only=True)
     std = df_rep.std(numeric_only=True)
 
-    # filenames: assume contiguous range; still fine if not (it's just a label)
     csv_file = out_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.csv"
     df_rep.to_csv(csv_file)
 
@@ -266,8 +361,10 @@ def main():
         "split_seed": split_seed,
         "train_seeds": train_seeds,
         "best_mc_file": str(best_file),
+        "best_baseline_file": str(baseline_best_file),
         "best_tag": best_tag,
         "config": cfg,
+        "baseline_config": base_cfg,
         "mc_samples_eval": mc_samples,
         "mean": mean.to_dict(),
         "std": std.to_dict(),
@@ -276,12 +373,38 @@ def main():
     json_file = out_dir / f"{dataset}_mc_dropout_eval_split{split_seed}_trainseeds{train_seeds[0]}-{train_seeds[-1]}.json"
     json_file.write_text(json.dumps(summary, indent=2))
 
-    print("\n=== MEAN ± STD (TEST, fixed split) ===")
-    for k in mean.index:
-        print(f"{k}: {mean[k]:.4f} ± {std[k]:.4f}")
+    print("\n" + "=" * 70)
+    print("MC DROPOUT TEST RESULTS (mean ± std over eval seeds)")
+    print("=" * 70)
 
-    print("\n✅ Saved per-seed CSV to:", csv_file)
-    print("✅ Saved summary JSON to:", json_file)
+    sections = {
+        "Baseline (no dropout, reference)": ["base_auc_pr", "base_lift10"],
+        "DET (MCD model, dropout OFF)": ["det_auc_pr", "det_lift10"],
+        "MC mean (MCD model, averaged)": ["mc_auc_pr", "mc_lift10"],
+        "LR: p_mc + u_mc (coupled)": ["lr_auc_pr", "lr_lift10"],
+        "LR: p_det + u_mc (same-model decoupled)": ["det_lr_auc_pr", "det_lr_lift10"],
+        "LR: p_base + u_mc (fully decoupled)": ["base_lr_auc_pr", "base_lr_lift10"],
+    }
+
+    for section_name, keys in sections.items():
+        print(f"\n  {section_name}:")
+        for k in keys:
+            print(f"    {k:25s} = {mean[k]:.5f} ± {std[k]:.5f}")
+
+    print(f"\n  LR coefficients (coupled: p_mc + u_mc):")
+    print(f"    {'lr_coef_u':25s} = {mean['lr_coef_u']:.4f} ± {std['lr_coef_u']:.4f}")
+    print(f"    {'lr_coef_p':25s} = {mean['lr_coef_p']:.4f} ± {std['lr_coef_p']:.4f}")
+
+    print(f"\n  LR coefficients (same-model: p_det + u_mc):")
+    print(f"    {'det_lr_coef_u':25s} = {mean['det_lr_coef_u']:.4f} ± {std['det_lr_coef_u']:.4f}")
+    print(f"    {'det_lr_coef_p':25s} = {mean['det_lr_coef_p']:.4f} ± {std['det_lr_coef_p']:.4f}")
+
+    print(f"\n  LR coefficients (fully decoupled: p_base + u_mc):")
+    print(f"    {'base_lr_coef_u':25s} = {mean['base_lr_coef_u']:.4f} ± {std['base_lr_coef_u']:.4f}")
+    print(f"    {'base_lr_coef_p':25s} = {mean['base_lr_coef_p']:.4f} ± {std['base_lr_coef_p']:.4f}")
+
+    print(f"\n✅ Saved per-seed CSV to:", csv_file)
+    print(f"✅ Saved summary JSON to:", json_file)
 
 
 if __name__ == "__main__":

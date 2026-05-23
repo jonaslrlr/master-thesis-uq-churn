@@ -63,48 +63,6 @@ def load_cell2cell_csv(path):
         df = df.drop_duplicates(subset=["CustomerID"], keep="last")
 
     return df
-    # Drop duplicates on ID if present (keep last like your snippet)
-    if cfg.id_col in df.columns:
-        df = df.drop_duplicates(subset=[cfg.id_col], keep="last")
-
-    # Drop some columns (only if they exist)
-    for c in cfg.drop_cols:
-        if c in df.columns:
-            df = df.drop(columns=[c])
-
-    # Fill a known high-cardinality categorical
-    if "ServiceArea" in df.columns:
-        df["ServiceArea"] = df["ServiceArea"].fillna("no info")
-
-    # Map Yes/No -> 1/0 for chosen columns if they exist
-    for c in cfg.binary_yesno_cols:
-        if c in df.columns:
-            df[c] = df[c].map({"No": 0, "Yes": 1})
-
-    # MaritalStatus mapping (if exists)
-    if "MaritalStatus" in df.columns:
-        m = dict(cfg.marital_map)
-        df["MaritalStatus"] = df["MaritalStatus"].map(m)
-
-    # CreditRating: take prefix before '-' and cast to int (if exists)
-    if "CreditRating" in df.columns:
-        # some rows can be NaN, handle carefully
-        cr = df["CreditRating"].astype(str)
-        cr = cr.str.split(cfg.creditrating_sep).str[0]
-        df["CreditRating"] = pd.to_numeric(cr, errors="coerce")
-
-    # HandsetPrice: "Unknown" -> 0, cast numeric (if exists)
-    if "HandsetPrice" in df.columns:
-        hp = df["HandsetPrice"].astype(str).replace(cfg.handsetprice_unknown, "0")
-        df["HandsetPrice"] = pd.to_numeric(hp, errors="coerce")
-
-    # Target mapping if present (keep original col name, we’ll map in encoder)
-    if cfg.target_col in df.columns:
-        # keep as string; encoder will map
-        pass
-
-    # IMPORTANT: do NOT dropna() here; handle missing in encoder consistently
-    return df
 
 
 def encode_tabular_for_tabnet(

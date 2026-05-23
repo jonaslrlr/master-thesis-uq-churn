@@ -12,7 +12,7 @@ from thesis_uq.metrics.ranking import standard_report
 from thesis_uq.io import RunMeta, save_metrics_json
 from thesis_uq.data.registry import load_for_tabnet
 
-REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DATASET = "chile"
 
 # training randomness only

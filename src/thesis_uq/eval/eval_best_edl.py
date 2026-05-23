@@ -44,7 +44,7 @@ from thesis_uq.io import RunMeta, save_metrics_json, save_uq_scores_npz
 from thesis_uq.plots.uq_plots import plot_prob_vs_uncertainty
 from thesis_uq.data.registry import load_for_tabnet
 
-REPO_ROOT = Path("/Users/jonaslorler/master-thesis-uq-churn")
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SPLIT_SEED = 42
 EVAL_SEEDS = list(range(5, 16))  # seeds 5..15 (11 seeds, never seen during gridsearch)
 

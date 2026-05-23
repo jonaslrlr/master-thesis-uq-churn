@@ -1,0 +1,35 @@
+{
+  "best_tag": "kl1.0_ann50_deep",
+  "config": {
+    "n_d": 32,
+    "n_a": 32,
+    "n_steps": 3,
+    "gamma": 1.5,
+    "mask_type": "entmax",
+    "cat_emb_dim": 2,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "kl_coef": 1.0,
+    "anneal_epochs": 50,
+    "head_hidden_dim": 16,
+    "split_seed": 42,
+    "train_seeds": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "backbone_from": "chile_baseline_split42_trainseeds1-4.json"
+}

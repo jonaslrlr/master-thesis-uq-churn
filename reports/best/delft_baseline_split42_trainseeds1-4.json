@@ -1,0 +1,25 @@
+{
+  "best_tag": "nd16_steps3_sparsemax_emb1",
+  "config": {
+    "n_d": 16,
+    "n_a": 16,
+    "n_steps": 3,
+    "mask_type": "sparsemax",
+    "cat_emb_dim": 1,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.0
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ]
+}

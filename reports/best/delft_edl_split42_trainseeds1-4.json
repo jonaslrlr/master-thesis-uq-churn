@@ -1,0 +1,35 @@
+{
+  "best_tag": "kl0.01_ann10_shallow",
+  "config": {
+    "n_d": 16,
+    "n_a": 16,
+    "n_steps": 3,
+    "gamma": 1.5,
+    "mask_type": "sparsemax",
+    "cat_emb_dim": 1,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "kl_coef": 0.01,
+    "anneal_epochs": 10,
+    "head_hidden_dim": 0,
+    "split_seed": 42,
+    "train_seeds": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "backbone_from": "delft_baseline_split42_trainseeds1-4.json"
+}

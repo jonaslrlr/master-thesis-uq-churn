@@ -1,0 +1,25 @@
+{
+  "best_tag": "nd64_steps5_entmax_emb4",
+  "config": {
+    "n_d": 64,
+    "n_a": 64,
+    "n_steps": 5,
+    "mask_type": "entmax",
+    "cat_emb_dim": 4,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 1024,
+    "virtual_batch_size": 128,
+    "dropout": 0.0
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ]
+}

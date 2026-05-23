@@ -16,7 +16,12 @@ src/*.egg-info/
 
 # experiment outputs
 logs/
-reports/
 *.log
 papers/
 data/raw/
+
+# reports: keep only the chosen hyperparameters
+reports/
+!reports/
+!reports/best/
+!reports/best/**

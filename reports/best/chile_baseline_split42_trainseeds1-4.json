@@ -1,0 +1,25 @@
+{
+  "best_tag": "nd32_steps3_entmax_emb2",
+  "config": {
+    "n_d": 32,
+    "n_a": 32,
+    "n_steps": 3,
+    "mask_type": "entmax",
+    "cat_emb_dim": 2,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.0
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "best_tag": "tau1e+00",
+  "config": {
+    "n_d": 32,
+    "n_a": 32,
+    "n_steps": 3,
+    "gamma": 1.5,
+    "mask_type": "sparsemax",
+    "cat_emb_dim": 4,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "prior_precision": 1.0,
+    "pred_method": "probit",
+    "split_seed": 42,
+    "train_seeds": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "backbone_from": "memwoes_baseline_split42_trainseeds1-4.json"
+}

@@ -1,0 +1,35 @@
+{
+  "best_tag": "drop0.1_attn0.15",
+  "config": {
+    "n_d": 64,
+    "n_a": 64,
+    "n_steps": 3,
+    "gamma": 1.5,
+    "mask_type": "sparsemax",
+    "cat_emb_dim": 2,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.1,
+    "attn_dropout": 0.15,
+    "mc_samples": 100,
+    "split_seed": 42,
+    "train_seeds": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "split_seed": 42,
+  "train_seeds": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "backbone_from": "bank_baseline_split42_trainseeds1-4.json"
+}

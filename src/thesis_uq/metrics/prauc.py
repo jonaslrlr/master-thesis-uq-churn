@@ -7,7 +7,7 @@ class PRAUC(Metric):
     """
     PR-AUC metric compatible with pytorch-tabnet's eval_metric API.
 
-    IMPORTANT: in your fork, pass the *class* (PRAUC), not an instance (PRAUC()).
+    IMPORTANT: in this fork, pass the *class* (PRAUC), not an instance (PRAUC()).
     """
     def __init__(self):
         self._name = "prauc"

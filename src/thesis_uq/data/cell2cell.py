@@ -128,7 +128,7 @@ def encode_tabular_for_tabnet(
     X = df.to_numpy(dtype=np.float32)
     features = list(df.columns)
 
-    # for compatibility with your telco encode signature
+    # for compatibility with the telco encode signature
     cat_dims = {c: int(df[c].nunique()) for c in cat_cols}
 
     if y is None:

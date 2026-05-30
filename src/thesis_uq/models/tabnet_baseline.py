@@ -21,7 +21,7 @@ def train_tabnet_baseline(
         n_d=n_d, n_a=n_a, n_steps=n_steps, gamma=gamma,
         cat_idxs=cat_idxs,
         cat_dims=cat_dims_list,
-        cat_emb_dim=[cat_emb_dim] * len(cat_dims_list),  # works with your fork
+        cat_emb_dim=[cat_emb_dim] * len(cat_dims_list),  # works with the fork
         optimizer_fn=torch.optim.Adam,
         optimizer_params=dict(lr=lr, weight_decay=weight_decay),
         scheduler_fn=torch.optim.lr_scheduler.StepLR,

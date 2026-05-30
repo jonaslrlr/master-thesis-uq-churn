@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-# Use your local fork building blocks
+# Use local fork building blocks
 from pytorch_tabnet.tab_network import EmbeddingGenerator, TabNetEncoder
 
 

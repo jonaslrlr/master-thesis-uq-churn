@@ -44,7 +44,7 @@ def train_tabnet_mc_dropout(
 def mc_predict(clf, X, n_samples=50):
     """
     Returns mean_prob (N,), std_prob (N,) for class 1 from MC dropout.
-    Requires your patched TabNetClassifier.predict_proba_mc.
+    Requires patched TabNetClassifier.predict_proba_mc.
 
     Note: _enable_mc_dropout() sets ALL torch.nn.Dropout modules to
     train mode (including the new attention dropout), while keeping

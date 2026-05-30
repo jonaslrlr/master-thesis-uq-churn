@@ -38,7 +38,6 @@ pure_eval==0.2.3
 Pygments==2.19.2
 pyparsing==3.3.1
 python-dateutil==2.9.0.post0
-pytorch-tabnet==4.1.0
 pytz==2025.2
 pyzmq==27.1.0
 ruff==0.14.13
@@ -57,3 +56,5 @@ traitlets==5.14.3
 typing_extensions==4.15.0
 tzdata==2025.3
 wcwidth==0.2.14
+xgboost==3.2.0
+catboost==1.2.10

@@ -1,0 +1,50 @@
+{
+  "dataset": "cdr",
+  "split_seed": 42,
+  "train_seeds": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "best_file": "/Users/jonaslorler/master-thesis-uq-churn/reports/best/cdr_baseline_split42_trainseeds1-4.json",
+  "best_tag": "nd32_steps5_entmax_emb1",
+  "config": {
+    "n_d": 32,
+    "n_a": 32,
+    "n_steps": 5,
+    "mask_type": "entmax",
+    "cat_emb_dim": 1,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.0
+  },
+  "mean": {
+    "auc_roc": 0.9119541171527946,
+    "auc_pr": 0.5174262049709539,
+    "acc": 0.938509090909091,
+    "lift10": 6.681222707423581,
+    "brier": 0.04538414633205427,
+    "ece": 0.01768246647725164
+  },
+  "std": {
+    "auc_roc": 0.0031223869864019397,
+    "auc_pr": 0.029275851339824025,
+    "acc": 0.004183249425694769,
+    "lift10": 0.13305491703835123,
+    "brier": 0.002805164442499648,
+    "ece": 0.006350824206944878
+  }
+}

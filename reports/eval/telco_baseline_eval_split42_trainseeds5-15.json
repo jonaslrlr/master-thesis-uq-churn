@@ -1,0 +1,50 @@
+{
+  "dataset": "telco",
+  "split_seed": 42,
+  "train_seeds": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "best_file": "/Users/jonaslorler/master-thesis-uq-churn/reports/best/telco_baseline_split42_trainseeds1-4.json",
+  "best_tag": "nd64_steps5_entmax_emb4",
+  "config": {
+    "n_d": 64,
+    "n_a": 64,
+    "n_steps": 5,
+    "mask_type": "entmax",
+    "cat_emb_dim": 4,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 1024,
+    "virtual_batch_size": 128,
+    "dropout": 0.0
+  },
+  "mean": {
+    "auc_roc": 0.8209565041115844,
+    "auc_pr": 0.6114584767179044,
+    "acc": 0.7825918762088975,
+    "lift10": 2.687999166608792,
+    "brier": 0.1464962825946405,
+    "ece": 0.04621089318014205
+  },
+  "std": {
+    "auc_roc": 0.007940388811069343,
+    "auc_pr": 0.016391303189742253,
+    "acc": 0.010952171772403442,
+    "lift10": 0.09468748608999698,
+    "brier": 0.003902257998064611,
+    "ece": 0.01224493746746621
+  }
+}

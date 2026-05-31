@@ -5,7 +5,7 @@ Chile Postpaid Telecom — data loader for TabNet
 Source: Confidential dataset provided by Yameng Guo (UGent).
 Chilean telecom operator, postpaid subscribers.
 
-7,056 customers, 37 usable features (all numeric after cleaning),
+7,056 customers, 38 usable features (all numeric after cleaning),
 binary target (CHURN).
 
 Domain: telecom (voluntary churn).

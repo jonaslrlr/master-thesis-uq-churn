@@ -1,0 +1,50 @@
+{
+  "dataset": "bank",
+  "split_seed": 42,
+  "train_seeds": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "best_file": "/Users/jonaslorler/master-thesis-uq-churn/reports/best/bank_baseline_split42_trainseeds1-4.json",
+  "best_tag": "nd64_steps3_sparsemax_emb2",
+  "config": {
+    "n_d": 64,
+    "n_a": 64,
+    "n_steps": 3,
+    "mask_type": "sparsemax",
+    "cat_emb_dim": 2,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.0
+  },
+  "mean": {
+    "auc_roc": 0.8521776972648776,
+    "auc_pr": 0.674358263355638,
+    "acc": 0.8564545454545456,
+    "lift10": 3.8737124944021493,
+    "brier": 0.10702322879684906,
+    "ece": 0.029511338075453586
+  },
+  "std": {
+    "auc_roc": 0.008639054554178873,
+    "auc_pr": 0.01199012145850242,
+    "acc": 0.0046338674207110535,
+    "lift10": 0.05058673084260795,
+    "brier": 0.0021205920407300688,
+    "ece": 0.008747106152900268
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "dataset": "cell2cell",
+  "split_seed": 42,
+  "train_seeds": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "best_file": "/Users/jonaslorler/master-thesis-uq-churn/reports/best/cell2cell_baseline_split42_trainseeds1-4.json",
+  "best_tag": "nd64_steps5_entmax_emb1",
+  "config": {
+    "n_d": 64,
+    "n_a": 64,
+    "n_steps": 5,
+    "mask_type": "entmax",
+    "cat_emb_dim": 1,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 1024,
+    "virtual_batch_size": 128,
+    "dropout": 0.0
+  },
+  "mean": {
+    "auc_roc": 0.6438824341872522,
+    "auc_pr": 0.41543054218919695,
+    "acc": 0.7139346451785238,
+    "lift10": 1.7018089480400034,
+    "brier": 0.19541659031446468,
+    "ece": 0.0320487051039958
+  },
+  "std": {
+    "auc_roc": 0.011300974551638749,
+    "auc_pr": 0.014960167386089827,
+    "acc": 0.003397680535952954,
+    "lift10": 0.07444636210815461,
+    "brier": 0.002540181559587991,
+    "ece": 0.011762156778256306
+  }
+}

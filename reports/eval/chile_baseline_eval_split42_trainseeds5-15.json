@@ -1,0 +1,50 @@
+{
+  "dataset": "chile",
+  "split_seed": 42,
+  "train_seeds": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "best_file": "/Users/jonaslorler/master-thesis-uq-churn/reports/best/chile_baseline_split42_trainseeds1-4.json",
+  "best_tag": "nd32_steps3_entmax_emb2",
+  "config": {
+    "n_d": 32,
+    "n_a": 32,
+    "n_steps": 3,
+    "mask_type": "entmax",
+    "cat_emb_dim": 2,
+    "gamma": 1.5,
+    "lr": 0.02,
+    "weight_decay": 1e-05,
+    "max_epochs": 200,
+    "patience": 30,
+    "batch_size": 512,
+    "virtual_batch_size": 64,
+    "dropout": 0.0
+  },
+  "mean": {
+    "auc_roc": 0.9228928294264047,
+    "auc_pr": 0.7901882893031125,
+    "acc": 0.8464245858013563,
+    "lift10": 3.6499676568642085,
+    "brier": 0.10382204574835283,
+    "ece": 0.058768365247382486
+  },
+  "std": {
+    "auc_roc": 0.0050898250842488805,
+    "auc_pr": 0.009696041480072847,
+    "acc": 0.008961007878125139,
+    "lift10": 0.09039992220752464,
+    "brier": 0.006809027067466094,
+    "ece": 0.016486942638044077
+  }
+}
